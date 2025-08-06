@@ -1,12 +1,32 @@
 package domain
 
+import "errors"
+
+var (
+	// ErrDomainNotFound 域名未找到
+	ErrDomainNotFound = errors.New("domain not found")
+)
+
+// Domain 域名信息
+type Domain struct {
+	DomainID string // 域名ID
+	Domain   string // 域名
+}
+
 // Domainer 域名接口
 // 用于定义动态域名解析的域名获取
 type Domainer interface {
-	// GetDomain 获取域名，根据关键词获取域名
-	GetDomain(keyWord string) (string, error)
+	// GetDomain 获取域名，根据ID获取域名
+	GetDomain(domainID string) (string, error)
 	// GetDomains 获取域名列表
-	GetDomains() ([]string, error)
+	GetDomains() ([]Domain, error)
+}
+
+// Refresher 刷新域名缓存接口
+type Refresher interface {
+	Domainer
+	// RefreshDomains 刷新域名缓存
+	RefreshDomains() error
 }
 
 // Record 域名解析记录
