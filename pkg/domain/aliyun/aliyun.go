@@ -2,21 +2,17 @@ package aliyun
 
 import (
 	"ddns/pkg/domain"
-	"time"
 
 	alidns20150109 "github.com/alibabacloud-go/alidns-20150109/v4/client"
 	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
 	util "github.com/alibabacloud-go/tea-utils/v2/service"
+	"github.com/alibabacloud-go/tea/tea"
 	credential "github.com/aliyun/credentials-go/credentials"
 )
 
 type Aliyun struct {
 	// 阿里云客户端
 	client *alidns20150109.Client
-	// 域名缓存
-	domains []domain.Domain
-	//缓存时间
-	cacheTime time.Time
 }
 
 // NewAliyun 创建新的阿里云客户端
@@ -45,39 +41,12 @@ func NewAliyun(id, secret string) (*Aliyun, error) {
 }
 
 // GetDomains 获取域名列表
-// 如果缓存过期则重新获取
 func (a *Aliyun) GetDomains() ([]domain.Domain, error) {
-	if a.domains == nil || time.Since(a.cacheTime) > time.Hour {
-		err := a.getDomains()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return a.domains, nil
-}
-
-// GetDomain 获取域名，根据ID获取域名
-func (a *Aliyun) GetDomain(domainID string) (string, error) {
-	for _, d := range a.domains {
-		if d.DomainID == domainID {
-			return d.Domain, nil
-		}
-	}
-	return "", domain.ErrDomainNotFound
-}
-
-// RefreshDomains 刷新域名缓存
-func (a *Aliyun) RefreshDomains() error {
-	return a.getDomains()
-}
-
-// getDomains 获取域名列表，并记录缓存时间
-func (a *Aliyun) getDomains() error {
 	request := &alidns20150109.DescribeDomainsRequest{}
 	runtime := &util.RuntimeOptions{}
 	response, err := a.client.DescribeDomainsWithOptions(request, runtime)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var domains []domain.Domain
 	for _, d := range response.Body.Domains.Domain {
@@ -86,7 +55,129 @@ func (a *Aliyun) getDomains() error {
 			Domain:   *d.DomainName,
 		})
 	}
-	a.domains = domains
-	a.cacheTime = time.Now()
+	return domains, nil
+}
+
+// GetDomainByID 获取域名，根据ID获取域名
+func (a *Aliyun) GetDomainByID(domainID string) (string, error) {
+	domains, err := a.GetDomains()
+	if err != nil {
+		return "", err
+	}
+	for _, d := range domains {
+		if d.DomainID == domainID {
+			return d.Domain, nil
+		}
+	}
+	return "", domain.ErrDomainNotFound
+}
+
+// GetRecords 获取域名解析记录
+func (a *Aliyun) GetRecords(domainName string) ([]domain.Record, error) {
+	request := &alidns20150109.DescribeDomainRecordsRequest{
+		DomainName: &domainName,
+	}
+	runtime := &util.RuntimeOptions{}
+	response, err := a.client.DescribeDomainRecordsWithOptions(request, runtime)
+	if err != nil {
+		return nil, err
+	}
+	var records []domain.Record
+	for _, r := range response.Body.DomainRecords.Record {
+		records = append(records, domain.Record{
+			RecordID:   *r.RecordId,
+			DomainName: *r.DomainName,
+			RR:         *r.RR,
+			Type:       *r.Type,
+			Value:      *r.Value,
+			TTL:        *r.TTL,
+		})
+	}
+	return records, nil
+}
+
+// GetRecordByID 获取记录，根据ID获取记录
+func (a *Aliyun) GetRecordByID(domainName, recordID string) (*domain.Record, error) {
+	records, err := a.GetRecords(domainName)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range records {
+		if r.RecordID == recordID {
+			return &r, nil
+		}
+	}
+	return nil, domain.ErrRecordNotFound
+}
+
+// GetRecordBySub 获取记录，根据子域名获取记录
+func (a *Aliyun) GetRecordBySub(subDomainName string) ([]domain.Record, error) {
+	describeSubDomainRecordsRequest := &alidns20150109.DescribeSubDomainRecordsRequest{
+		SubDomain: tea.String(subDomainName),
+	}
+	runtime := &util.RuntimeOptions{}
+	response, err := a.client.DescribeSubDomainRecordsWithOptions(describeSubDomainRecordsRequest, runtime)
+	if err != nil {
+		return nil, err
+	}
+	var records []domain.Record
+	for _, r := range response.Body.DomainRecords.Record {
+		records = append(records, domain.Record{
+			RecordID:   *r.RecordId,
+			DomainName: *r.DomainName,
+			RR:         *r.RR,
+			Type:       *r.Type,
+			Value:      *r.Value,
+			TTL:        *r.TTL,
+		})
+	}
+	return records, nil
+}
+
+// AddRecord 添加记录
+// 返回新记录ID
+func (a *Aliyun) AddRecord(record domain.Record) (string, error) {
+	request := &alidns20150109.AddDomainRecordRequest{
+		DomainName: &record.DomainName,
+		RR:         &record.RR,
+		Type:       &record.Type,
+		Value:      &record.Value,
+		TTL:        &record.TTL,
+	}
+	runtime := &util.RuntimeOptions{}
+	response, err := a.client.AddDomainRecordWithOptions(request, runtime)
+	if err != nil {
+		return "", err
+	}
+	return *response.Body.RecordId, nil
+}
+
+// deleteRecord 删除记录
+// 根据ID删除记录
+func (a *Aliyun) DeleteRecord(recordID string) error {
+	request := &alidns20150109.DeleteDomainRecordRequest{
+		RecordId: tea.String(recordID),
+	}
+	runtime := &util.RuntimeOptions{}
+	_, err := a.client.DeleteDomainRecordWithOptions(request, runtime)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *Aliyun) UpdateRecord(record domain.Record) error {
+	request := &alidns20150109.UpdateDomainRecordRequest{
+		RecordId: tea.String(record.RecordID),
+		RR:       &record.RR,
+		Type:     &record.Type,
+		Value:    &record.Value,
+		TTL:      &record.TTL,
+	}
+	runtime := &util.RuntimeOptions{}
+	_, err := a.client.UpdateDomainRecordWithOptions(request, runtime)
+	if err != nil {
+		return err
+	}
 	return nil
 }
