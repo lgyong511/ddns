@@ -70,12 +70,16 @@ func NewCmd(command string, executor Executor) *Cmd {
 	}
 }
 
-func (c *Cmd) Get(ipType addr.IPType, rule string) (net.IP, error) {
+func (c *Cmd) Get(ipType addr.Type, rule string) (net.IP, error) {
 	ips, err := c.GetAll()
 	if err != nil {
 		return nil, err
 	}
-	return addr.MatchReg(ipType, ips, rule)
+	ips, err = addr.FilterIP(ips, ipType)
+	if err != nil {
+		return nil, err
+	}
+	return addr.NewRuler(rule).Match(ips)
 }
 
 // GetAll 获取执行命令得到的所有IP地址

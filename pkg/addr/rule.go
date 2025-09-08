@@ -7,6 +7,26 @@ import (
 	"strings"
 )
 
+// FilterIP 过滤 IP 地址，返回指定类型的 IP 地址列表
+func FilterIP(ips []net.IP, ipType Type) ([]net.IP, error) {
+	var result []net.IP
+	for _, ip := range ips {
+		if ip == nil {
+			continue
+		}
+		if ipType == IP4 && ip.To4() != nil {
+			result = append(result, ip)
+		} else if ipType == IP6 && ip.To4() == nil && ip.To16() != nil {
+			result = append(result, ip)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no %s ip found", ipType)
+	}
+	return result, nil
+}
+
 // 规则1、空值表示默认选择第一个。
 // 规则2、值是@开头的后面的数字用于选择第几个IP地址，超出可选范围选择第一个
 // 规则3、值是9209:d0ff:fe09:781d/64，ipv6后缀的，取前缀进行拼接，给定了前缀长度按给定长度拼接，默认按64
