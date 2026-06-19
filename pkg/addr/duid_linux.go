@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/netip"
 	"os/exec"
 	"time"
 )
@@ -14,7 +14,7 @@ import (
 // Duid 获取IP地址，只适用于在软路由OpenWrt上获取IPv6地址
 
 // GetAllDuid 获取所有DUID和对应的IP地址列表，返回一个map，key是DUID，value是IP地址切片
-func GetAllDuid(ctx context.Context) (map[string][]net.IP, error) {
+func GetAllDuid(ctx context.Context) (map[string][]netip.Addr, error) {
 	// 设置一个超时时间，防止ctx没有设置超时和命令执行时间过长
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -40,14 +40,16 @@ func GetAllDuid(ctx context.Context) (map[string][]net.IP, error) {
 		return nil, err
 	}
 
-	result := make(map[string][]net.IP)
+	result := make(map[string][]netip.Addr)
 	for _, lease := range data.Device.BrLan.Leases {
-		var ips []net.IP
+		var ips []netip.Addr
 
 		for _, addr := range lease.Ipv6Addr {
-			if ip := net.ParseIP(addr.Address); ip != nil {
-				ips = append(ips, ip)
+			ip, err := netip.ParseAddr(addr.Address)
+			if err != nil {
+				continue
 			}
+			ips = append(ips, ip)
 		}
 		if len(ips) > 0 {
 			result[lease.Duid] = ips
@@ -72,7 +74,7 @@ func NewDuid(duid string) *Duid {
 }
 
 // Fetch 根据DUID获取对应的IP地址列表，如果没有找到对应的IP地址，则返回错误
-func (d *Duid) Fetch(ctx context.Context) ([]net.IP, error) {
+func (d *Duid) Fetch(ctx context.Context) ([]netip.Addr, error) {
 	if d.Duid == "" {
 		return nil, fmt.Errorf("Duid Fetcher: 请提供duid")
 	}
