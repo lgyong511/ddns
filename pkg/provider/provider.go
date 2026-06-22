@@ -2,7 +2,12 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+)
+
+var (
+	ErrRecordNotFound = errors.New("record not found")
 )
 
 // Getter 域名解析记录获取接口
