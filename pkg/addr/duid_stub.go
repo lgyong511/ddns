@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 )
 
 // GetAllDuid 在非 Linux 系统下直接返回错误
@@ -24,6 +25,6 @@ func NewDuid(duid string) *Duid {
 }
 
 // Fetch 在非 Linux 系统下直接返回错误
-func (d *Duid) Fetch(ctx context.Context) ([]net.IP, error) {
+func (d *Duid) Fetch(ctx context.Context) ([]netip.Addr, error) {
 	return nil, fmt.Errorf("DUID 获取方式仅支持 Linux/OpenWrt 系统")
 }

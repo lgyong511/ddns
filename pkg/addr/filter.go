@@ -1,6 +1,7 @@
 package addr
 
 import (
+	"ddns/pkg/provider"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -10,6 +11,17 @@ import (
 
 // Filter 函数类型，接受一个 netip.Addr 类型的参数，返回一个 bool 类型的结果，表示该地址是否满足过滤条件。
 type Filter func(addr netip.Addr) bool
+
+func NewFilter(v provider.Version) Filter {
+	switch v {
+	case provider.IPv4:
+		return IsIPv4
+	case provider.IPv6:
+		return IsIPv6
+	default:
+		return nil
+	}
+}
 
 // IsIPv4 是否IPv4地址的过滤函数
 func IsIPv4(addr netip.Addr) bool {

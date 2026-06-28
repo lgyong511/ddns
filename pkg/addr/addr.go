@@ -30,6 +30,21 @@ type Fetcher interface {
 	Fetch(context.Context) ([]netip.Addr, error)
 }
 
+func NewFetcher(getType string, getValue string) Fetcher {
+	switch getType {
+	case "cmd":
+		return NewCommand(getValue)
+	case "duid":
+		return NewDuid(getValue)
+	case "nic":
+		return NewNic(getValue)
+	case "url":
+		return NewUrl(getValue)
+	default:
+		return nil
+	}
+}
+
 // extractFromString 从字符串中提取IP地址
 func extractFromString(s string) ([]netip.Addr, error) {
 	var ips []netip.Addr

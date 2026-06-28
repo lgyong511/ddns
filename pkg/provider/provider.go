@@ -16,6 +16,7 @@ type Getter interface {
 	// version: 0=全部, 4=IPv4, 6=IPv6
 	GetAll(context.Context, string, Version) ([]Record, error)
 	// GetSub 获取指定域名的指定子域名的解析记录
+	//string 子域名，www.lgyong.cc
 	// version: 0=全部, 4=IPv4, 6=IPv6
 	GetSub(context.Context, string, Version) ([]Record, error)
 }
@@ -36,14 +37,6 @@ type Creator interface {
 type Deleter interface {
 	// Delete 删除指定域名解析记录
 	Delete(context.Context, string) error
-}
-
-// Operator 域名解析记录操作接口，组合了 CRUD 所有操作
-type Operator interface {
-	Getter
-	Creator
-	Updater
-	Deleter
 }
 
 // Version 解析记录类型版本

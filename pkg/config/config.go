@@ -1,8 +1,9 @@
 package config
 
 import (
-	provider "ddns/pkg/provider"
+	"ddns/pkg/provider"
 	"fmt"
+	"time"
 )
 
 // Config 代表整个 YAML 文件的根结构
@@ -12,25 +13,35 @@ type Config struct {
 
 // Provider 代表阿里等服务商配置
 type Provider struct {
-	Name      string   `yaml:"name" mapstructure:"name"`
-	Provider  string   `yaml:"provider" mapstructure:"provider"`
-	KeyID     string   `yaml:"keyId" mapstructure:"keyId"`
-	KeySecret string   `yaml:"keySecret" mapstructure:"keySecret"`
-	Interval  int      `yaml:"interval" mapstructure:"interval"`
-	Timeout   int      `yaml:"timeout" mapstructure:"timeout"`
-	Records   []Record `yaml:"records" mapstructure:"records"`
+	//名称，唯一标识
+	Name string `yaml:"name" mapstructure:"name"`
+	//DNS服务商名称，aliyun，DNSpod等
+	Provider string `yaml:"provider" mapstructure:"provider"`
+	//DNS服务商密钥
+	KeyID     string `yaml:"keyId" mapstructure:"keyId"`
+	KeySecret string `yaml:"keySecret" mapstructure:"keySecret"`
+	// 记录列表
+	Records []Record `yaml:"records" mapstructure:"records"`
 }
 
 // Record 代表具体解析记录的配置
 type Record struct {
-	Name       string           `yaml:"name" mapstructure:"name"`
-	SubDomains []string         `yaml:"subDomains" mapstructure:"subDomains"`
-	IPVersion  provider.Version `yaml:"ipVersion" mapstructure:"ipVersion"`
-	TTL        int              `yaml:"ttl" mapstructure:"ttl"`
-	GetType    string           `yaml:"getType" mapstructure:"getType"`
-	GetValue   string           `yaml:"getValue" mapstructure:"getValue"`
-	Interval   int              `yaml:"interval" mapstructure:"interval"`
-	Rule       string           `yaml:"rule" mapstructure:"rule"`
+	//名称，唯一标识
+	Name string `yaml:"name" mapstructure:"name"`
+	//子域名列表
+	SubDomains []string `yaml:"subDomains" mapstructure:"subDomains"`
+	//IP地址版本
+	IPVersion provider.Version `yaml:"ipVersion" mapstructure:"ipVersion"`
+	// 生效时间，单位秒
+	TTL int64 `yaml:"ttl" mapstructure:"ttl"`
+	//获取IP地址的类型，如：CMD、URL
+	GetType string `yaml:"getType" mapstructure:"getType"`
+	//对应的值，如：ipconfig、https://ip.cn
+	GetValue string `yaml:"getValue" mapstructure:"getValue"`
+	//获取IP地址的周期，单位秒
+	Interval time.Duration `yaml:"interval" mapstructure:"interval"`
+	//筛选IP地址的规则
+	Rule string `yaml:"rule" mapstructure:"rule"`
 }
 
 // Validate 检查配置的有效性
