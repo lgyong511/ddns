@@ -17,15 +17,13 @@ type Operator interface {
 	provider.Deleter
 }
 
-func NewOperator(provider, accessKeyId, accessKeySecret string) Operator {
+func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error) {
 	switch provider {
 	case "aliyun":
-		return aliyun.NewAliyun(accessKeyId, accessKeySecret)
+		return aliyun.NewAliyun(accessKeyId, accessKeySecret), nil
 	default:
-		return nil
-
+		return nil, fmt.Errorf("不支持的DNS运营商：%v", provider)
 	}
-
 }
 
 type Engine struct {
@@ -66,9 +64,16 @@ func (e *Engine) Start(ctx context.Context) {
 				continue
 			}
 		}
+
+		//依次启动Provider
 		for _, provider := range cfg.Providers {
+			p, err := NewProvider(&provider)
+			if err != nil {
+				fmt.Printf("初始化服务商 [%s] 失败，跳过该服务商。Err: %v\n", provider.Name, err)
+				continue
+			}
 			wg.Add(1)
-			go NewProvider(&provider).Start(pctx, &wg)
+			go p.Start(pctx, &wg)
 			fmt.Printf("%v，启动成功！\n", provider.Name)
 		}
 
