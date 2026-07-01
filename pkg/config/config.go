@@ -58,18 +58,18 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf("providers[%d].name 不能为空", i))
 		}
 		if p.KeyID == "" || p.KeySecret == "" {
-			errs = append(errs, fmt.Errorf("providers[%d] 的 keyId 和 keySecret 不能为空", i))
+			errs = append(errs, fmt.Errorf("providers[%s] 的 keyId 和 keySecret 不能为空", p.Name))
 		}
 		if p.Provider == "" {
-			errs = append(errs, fmt.Errorf("providers[%d].provider 不能为空", i))
+			errs = append(errs, fmt.Errorf("providers[%s].provider 不能为空", p.Name))
 		}
 		if p.ForceInterval < 1 || p.ForceInterval > 30 {
-			errs = append(errs, fmt.Errorf("providers[%d].forceInterval 请填写 1-30 之间的数值，默认为 5 分钟", i))
+			errs = append(errs, fmt.Errorf("providers[%s].forceInterval 请填写 1-30 之间的数值，默认为 5 分钟", p.Name))
 		}
 
 		// 检查provider是否重名
 		if providerNames[p.Name] {
-			errs = append(errs, fmt.Errorf("providers[%d].name 重复: %s", i, p.Name))
+			errs = append(errs, fmt.Errorf("providers[%s].name 重复: %s", p.Name, p.Name))
 		}
 		providerNames[p.Name] = true
 
@@ -78,30 +78,30 @@ func (c *Config) Validate() error {
 		for j, r := range p.Records {
 			// 检查record空值
 			if r.Name == "" {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].name 不能为空", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].name 不能为空", p.Name, j))
 			}
 			if r.GetType == "" {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].getType 不能为空", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 不能为空", p.Name, j))
 			}
 			if r.GetValue == "" {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].getValue 不能为空", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getValue 不能为空", p.Name, j))
 			}
 			if len(r.SubDomains) == 0 {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].subDomains 不能为空", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains 不能为空", p.Name, j))
 			}
 			if r.IPVersion != provider.IPv4 && r.IPVersion != provider.IPv6 {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].ipVersion 无效，请填写 4 或 6", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ipVersion 无效，请填写 4 或 6", p.Name, j))
 			}
 			if r.Interval < 5 || r.Interval > 60 {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].interval 请填写 5-60 之间的数值，默认为 10 秒", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].interval 请填写 5-60 之间的数值，默认为 10 秒", p.Name, j))
 			}
 			if r.TTL < 1 || r.TTL > 86400 {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].ttl 请填写 1-86400 之间的数值，默认为 600 秒", i, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ttl 请填写 1-86400 之间的数值，默认为 600 秒", p.Name, j))
 			}
 
 			// 检查record是否重名
 			if recordNames[r.Name] {
-				errs = append(errs, fmt.Errorf("providers[%d].records[%d].name 重复: %s", i, j, r.Name))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].name 重复: %s", p.Name, j, r.Name))
 			}
 			recordNames[r.Name] = true
 		}
