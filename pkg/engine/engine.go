@@ -17,6 +17,7 @@ type Operator interface {
 	provider.Deleter
 }
 
+// NewOperator 根据服务商类型创建对应的 Operator 实例
 func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error) {
 	switch provider {
 	case "aliyun":
@@ -26,17 +27,20 @@ func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error
 	}
 }
 
+// Engine 代表整个动态域名解析引擎，负责管理配置和启动各个服务商的同步任务
 type Engine struct {
 	// 配置管理器
 	cfgManager *config.Manager
 }
 
+// NewEngine 创建一个新的 Engine 实例
 func NewEngine(cfgManager *config.Manager) *Engine {
 	return &Engine{
 		cfgManager: cfgManager,
 	}
 }
 
+// Start 启动整个动态域名解析引擎，监听配置文件变化并热重载
 func (e *Engine) Start(ctx context.Context) {
 	// 声明热加载通道
 	reloadChan := make(chan struct{}, 1)
@@ -55,6 +59,9 @@ func (e *Engine) Start(ctx context.Context) {
 		cfg, err := e.cfgManager.Get()
 		if err != nil {
 			fmt.Println("Engine启动失败！在获取配置文件是报错！err：", err)
+			//如果配置文件获取错误，要么收到ctx关闭信号退出程序
+			//要么触发配置文件重载，重启启动
+			//否则程序将组赛在此select中，直到任意通道有信号
 			select {
 			case <-ctx.Done():
 				cancel()
@@ -73,7 +80,11 @@ func (e *Engine) Start(ctx context.Context) {
 				continue
 			}
 			wg.Add(1)
-			go p.Start(pctx, &wg)
+			go func(provider *Provider) {
+				defer wg.Done()
+				provider.Start(pctx)
+
+			}(p)
 			fmt.Printf("%v，启动成功！\n", provider.Name)
 		}
 

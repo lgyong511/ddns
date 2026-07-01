@@ -13,87 +13,112 @@ import (
 	"time"
 )
 
-// 子域名同步缓存
+// SubDomainInfo 子域名同步缓存，以子域名为最新缓存对象。
 type SubDomainInfo struct {
-	//IP地址
+	//IP地址缓存，即上传同步的
 	Addr netip.Addr
 	//上次同步的时间
 	LastSyncAt time.Time
 }
 
+// Provider 代表一个DNS服务商实例，包含服务商配置和操作接口
 type Provider struct {
 	// 服务商配置
 	provider *config.Provider
 	//服务商CRUD接口
 	operator Operator
-	// 强制与DNS服务商比对时间
-	forceInterval time.Duration
-	//子域名缓存，key是子域名
-	cacheSubDomain map[string]SubDomainInfo
 }
 
+// NewProvider 创建一个新的 Provider 实例
 func NewProvider(provider *config.Provider) (*Provider, error) {
 	operator, err := NewOperator(provider.Provider, provider.KeyID, provider.KeySecret)
 	if err != nil {
 		return nil, err
 	}
+
 	return &Provider{
-		provider:       provider,
-		operator:       operator,
-		forceInterval:  30 * time.Minute,
-		cacheSubDomain: make(map[string]SubDomainInfo),
+		provider: provider,
+		operator: operator,
 	}, nil
 }
 
-func (p *Provider) Start(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+// Start 启动 Provider，监听所有记录的IP地址变化，并同步到DNS服务商
+func (p *Provider) Start(ctx context.Context) {
+	var wg sync.WaitGroup
 	//启动所有记录的获取IP地址
 	for _, record := range p.provider.Records {
-		//把所有记录写入缓存map
 		wg.Add(1)
-		go p.watchRecord(ctx, &record, wg)
+		r := record
+		go func(record *config.Record) {
+			defer wg.Done()
+			p.watchRecord(ctx, record)
+		}(&r)
 		fmt.Printf("[%s] 记录 %s 监听启动成功！\n", p.provider.Name, record.Name)
 	}
+
+	<-ctx.Done()
+	fmt.Printf("[%s] Provider 正在退出...\n", p.provider.Name)
+
+	wg.Wait()
+	fmt.Printf("[%s] Provider 已退出\n", p.provider.Name)
 }
 
-func (p *Provider) watchRecord(ctx context.Context, record *config.Record, wg *sync.WaitGroup) {
-	wg.Done()
+// watchRecord 监听单个记录的IP地址变化，并同步到DNS服务商
+func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 
-	//声明同步函数
-	runSync := func() {
-		// 获取当前IP地址
-		currentAddr, err := p.fetchCurrentAddr(ctx, record)
-		if err != nil {
-			fmt.Printf("[%s] 获取 IP 失败: %v\n", record.Name, err)
-			return
-		}
-		// 遍历所有子域名
-		for _, subDomain := range record.SubDomains {
-			//读取缓存
-			cache, exists := p.cacheSubDomain[subDomain]
-			//判断是否需要同步
-			needUpdate := !exists || cache.Addr != currentAddr || time.Since(cache.LastSyncAt) >= p.forceInterval
-			// 不需要同步，退出当前循环
-			if !needUpdate {
-				continue
-			}
+	//子域名缓存，key是子域名
+	cacheSubDomain := make(map[string]SubDomainInfo)
 
-			// 执行同步，有执行函数判是创建还是更新
-			if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
-				fmt.Printf("[%s] 子域名 %s 同步失败: %v\n", record.Name, subDomain, err)
-				continue // 当前子域名失败，不更新缓存，下一轮重试
-			}
-			//成功，记录子域名缓存
-			p.cacheSubDomain[subDomain] = SubDomainInfo{Addr: currentAddr, LastSyncAt: time.Now()}
-		}
-	}
+	// //声明同步函数
+	// runSync := func() {
+	// 	// 获取当前IP地址
+	// 	currentAddr, err := p.fetchCurrentAddr(ctx, record)
+	// 	if err != nil {
+	// 		fmt.Printf("[%s] 获取 IP 失败: %v\n", record.Name, err)
+	// 		return
+	// 	}
 
-	//启动执行一次
-	runSync()
+	// 	//强制同步时间，单位分钟
+	// 	//允许范围在1-30分钟
+	// 	forceInterval := p.provider.ForceInterval
+	// 	if forceInterval < 1 || forceInterval > 30 {
+	// 		forceInterval = 5
+	// 	}
+
+	// 	// 遍历所有子域名
+	// 	for _, subDomain := range record.SubDomains {
+	// 		//读取缓存
+	// 		cache, exists := cacheSubDomain[subDomain]
+	// 		//判断是否需要同步
+	// 		needUpdate := !exists || cache.Addr != currentAddr || time.Since(cache.LastSyncAt) >= forceInterval
+	// 		// 不需要同步，退出当前循环
+	// 		if !needUpdate {
+	// 			fmt.Printf("[%s] 子域名 %s IP地址：%s，没有变化，不执行同步。\n", record.Name, subDomain, currentAddr)
+	// 			continue
+	// 		}
+
+	// 		// 执行DNS服务商操作
+	// 		if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
+	// 			fmt.Printf("[%s] 子域名 %s 同步失败: %v\n", record.Name, subDomain, err)
+	// 			continue // 当前子域名失败，不更新缓存，下一轮重试
+	// 		}
+	// 		//成功，记录子域名缓存
+	// 		cacheSubDomain[subDomain] = SubDomainInfo{Addr: currentAddr, LastSyncAt: time.Now()}
+	// 	}
+	// }
+
+	// //启动执行一次
+	// runSync()
+
+	p.syncRecord(ctx, record, cacheSubDomain)
 
 	//设置定时器
-	ticker := time.NewTicker(record.Interval * time.Second)
+	//允许范围是5-60秒
+	interval := record.Interval
+	if interval < 5 || interval > 60 {
+		interval = 10
+	}
+	ticker := time.NewTicker(interval * time.Second)
 	defer ticker.Stop()
 
 	//死循环监听ctx和定时器
@@ -103,12 +128,52 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record, wg *s
 			fmt.Printf("[%s] 收到退出信号，安全退出监听。\n", record.Name)
 			return
 		case <-ticker.C:
-			runSync()
+			// runSync()
+			p.syncRecord(ctx, record, cacheSubDomain)
 		}
 	}
 }
 
-// 获取经过版本过滤、规则筛选后的当前IP地址
+// syncRecord 同步单个记录的IP地址变化到DNS服务商
+func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheSubDomain map[string]SubDomainInfo) {
+
+	// 获取当前IP地址
+	currentAddr, err := p.fetchCurrentAddr(ctx, record)
+	if err != nil {
+		fmt.Printf("[%s] 获取 IP 失败: %v\n", record.Name, err)
+		return
+	}
+
+	//强制同步时间，单位分钟
+	//允许范围在1-30分钟
+	forceInterval := p.provider.ForceInterval
+	if forceInterval < 1 || forceInterval > 30 {
+		forceInterval = 5
+	}
+
+	// 遍历所有子域名
+	for _, subDomain := range record.SubDomains {
+		//读取缓存
+		cache, exists := cacheSubDomain[subDomain]
+		//判断是否需要同步
+		needUpdate := !exists || cache.Addr != currentAddr || time.Since(cache.LastSyncAt) >= forceInterval*time.Minute
+		// 不需要同步，退出当前循环
+		if !needUpdate {
+			fmt.Printf("[%s] 子域名 %s IP地址：%s，没有变化，不执行同步。\n", record.Name, subDomain, currentAddr)
+			continue
+		}
+
+		// 执行DNS服务商操作
+		if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
+			fmt.Printf("[%s] 子域名 %s 同步失败: %v\n", record.Name, subDomain, err)
+			continue // 当前子域名失败，不更新缓存，下一轮重试
+		}
+		//成功，记录子域名缓存
+		cacheSubDomain[subDomain] = SubDomainInfo{Addr: currentAddr, LastSyncAt: time.Now()}
+	}
+}
+
+// fetchCurrentAddr 获取经过版本过滤、规则筛选后的当前IP地址
 func (p *Provider) fetchCurrentAddr(ctx context.Context, record *config.Record) (netip.Addr, error) {
 	//获取IP地址
 	addrs, err := addr.NewFetcher(record.GetType, record.GetValue).Fetch(ctx)
@@ -118,7 +183,7 @@ func (p *Provider) fetchCurrentAddr(ctx context.Context, record *config.Record) 
 	//构建版本过滤
 	versionFilter := addr.NewFilter(record.IPVersion)
 	if versionFilter == nil {
-		return netip.Addr{}, err
+		return netip.Addr{}, fmt.Errorf("无效的 IP 版本: %v", record.IPVersion)
 	}
 	//执行过滤
 	addrs = addr.FilterAddrs(addrs, versionFilter, addr.IsPublic)
@@ -130,12 +195,13 @@ func (p *Provider) fetchCurrentAddr(ctx context.Context, record *config.Record) 
 	return addr, nil
 }
 
+// syncToProvider 同步子域名记录到DNS服务商
 func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr) error {
 	//调用DNS运营商
 	resRecords, err := p.operator.GetSub(ctx, subDomain, record.IPVersion)
 
 	// 记录不存在，创建
-	if errors.Is(err, addr.ErrNoIPFound) {
+	if errors.Is(err, provider.ErrRecordNotFound) {
 		// 切割rr domain
 		rr, domain, err := utils.ParseDomain(subDomain)
 		if err != nil {
@@ -149,10 +215,10 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 			Value:      currentAddr.String(),
 			TTL:        record.TTL,
 		})
-		if err != nil {
-			return err
+		if err == nil {
+			fmt.Printf("【创建成功】子域名 [%s] -> %s\n", subDomain, currentAddr)
 		}
-		fmt.Printf("【创建成功】子域名 [%s] -> %s\n", subDomain, currentAddr)
+		return err
 	}
 
 	// 其他错误
@@ -172,6 +238,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 			return fmt.Errorf("更新记录失败: %w", err)
 		}
 		fmt.Printf("【IP变动/例行同步】更新子域名 [%s] 成功: %s -> %s\n", subDomain, resRecord.Value, currentAddr)
+		//确认是要更新所有，还是第一个
 	}
 	return nil
 }

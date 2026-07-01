@@ -22,6 +22,8 @@ type Provider struct {
 	KeySecret string `yaml:"keySecret" mapstructure:"keySecret"`
 	// 记录列表
 	Records []Record `yaml:"records" mapstructure:"records"`
+	// 强制同步时间，单位分钟
+	ForceInterval time.Duration `yaml:"forceInterval" mapstructure:"forceInterval"`
 }
 
 // Record 代表具体解析记录的配置
@@ -38,7 +40,7 @@ type Record struct {
 	GetType string `yaml:"getType" mapstructure:"getType"`
 	//对应的值，如：ipconfig、https://ip.cn
 	GetValue string `yaml:"getValue" mapstructure:"getValue"`
-	//获取IP地址的周期，单位秒
+	//记录同步和获取IP地址的周期，单位秒
 	Interval time.Duration `yaml:"interval" mapstructure:"interval"`
 	//筛选IP地址的规则
 	Rule string `yaml:"rule" mapstructure:"rule"`
@@ -59,6 +61,7 @@ func (c *Config) Validate() error {
 		if p.Provider == "" {
 			return fmt.Errorf("providers[%d].provider 不能为空", i)
 		}
+
 		// 检查provider是否重名
 		if providerNames[p.Name] {
 			return fmt.Errorf("providers[%d].name 重复: %s", i, p.Name)
