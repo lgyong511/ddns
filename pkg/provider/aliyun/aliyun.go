@@ -21,6 +21,7 @@ import (
 const (
 	// dns服务器地址
 	host = "alidns.cn-hangzhou.aliyuncs.com"
+	// host ="alidns.aliyuncs.com"
 
 	// API接口版本
 	version = "2015-01-09"
@@ -46,7 +47,7 @@ func NewAliyun(accessKeyId, accessKeySecret string) *Aliyun {
 		AccessKeyId:     accessKeyId,
 		AccessKeySecret: accessKeySecret,
 		client:          &http.Client{Timeout: 15 * time.Second},
-		limiter:         rate.NewLimiter(2, 3), // 每秒2次请求，允许突发3次
+		limiter:         rate.NewLimiter(5, 10), // 每秒5次请求，允许突发10次
 	}
 }
 

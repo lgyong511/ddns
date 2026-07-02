@@ -52,6 +52,7 @@ func (m *Manager) Load(path string) error {
 	defer m.rwMutex.Unlock()
 	//把配置文件赋值给Manager字段
 	m.config = &cfg
+	m.watchConfig()
 	return nil
 }
 

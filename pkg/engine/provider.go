@@ -69,47 +69,6 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	//子域名缓存，key是子域名
 	cacheSubDomain := make(map[string]SubDomainInfo)
 
-	// //声明同步函数
-	// runSync := func() {
-	// 	// 获取当前IP地址
-	// 	currentAddr, err := p.fetchCurrentAddr(ctx, record)
-	// 	if err != nil {
-	// 		fmt.Printf("[%s] 获取 IP 失败: %v\n", record.Name, err)
-	// 		return
-	// 	}
-
-	// 	//强制同步时间，单位分钟
-	// 	//允许范围在1-30分钟
-	// 	forceInterval := p.provider.ForceInterval
-	// 	if forceInterval < 1 || forceInterval > 30 {
-	// 		forceInterval = 5
-	// 	}
-
-	// 	// 遍历所有子域名
-	// 	for _, subDomain := range record.SubDomains {
-	// 		//读取缓存
-	// 		cache, exists := cacheSubDomain[subDomain]
-	// 		//判断是否需要同步
-	// 		needUpdate := !exists || cache.Addr != currentAddr || time.Since(cache.LastSyncAt) >= forceInterval
-	// 		// 不需要同步，退出当前循环
-	// 		if !needUpdate {
-	// 			fmt.Printf("[%s] 子域名 %s IP地址：%s，没有变化，不执行同步。\n", record.Name, subDomain, currentAddr)
-	// 			continue
-	// 		}
-
-	// 		// 执行DNS服务商操作
-	// 		if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
-	// 			fmt.Printf("[%s] 子域名 %s 同步失败: %v\n", record.Name, subDomain, err)
-	// 			continue // 当前子域名失败，不更新缓存，下一轮重试
-	// 		}
-	// 		//成功，记录子域名缓存
-	// 		cacheSubDomain[subDomain] = SubDomainInfo{Addr: currentAddr, LastSyncAt: time.Now()}
-	// 	}
-	// }
-
-	// //启动执行一次
-	// runSync()
-
 	p.syncRecord(ctx, record, cacheSubDomain)
 
 	//设置定时器
@@ -128,7 +87,6 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 			fmt.Printf("[%s] 收到退出信号，安全退出监听。\n", record.Name)
 			return
 		case <-ticker.C:
-			// runSync()
 			p.syncRecord(ctx, record, cacheSubDomain)
 		}
 	}

@@ -63,9 +63,6 @@ func (c *Config) Validate() error {
 		if p.Provider == "" {
 			errs = append(errs, fmt.Errorf("providers[%s].provider 不能为空", p.Name))
 		}
-		if p.ForceInterval < 1 || p.ForceInterval > 30 {
-			errs = append(errs, fmt.Errorf("providers[%s].forceInterval 请填写 1-30 之间的数值，默认为 5 分钟", p.Name))
-		}
 
 		// 检查provider是否重名
 		if providerNames[p.Name] {
@@ -91,12 +88,6 @@ func (c *Config) Validate() error {
 			}
 			if r.IPVersion != provider.IPv4 && r.IPVersion != provider.IPv6 {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ipVersion 无效，请填写 4 或 6", p.Name, j))
-			}
-			if r.Interval < 5 || r.Interval > 60 {
-				errs = append(errs, fmt.Errorf("providers[%s].records[%d].interval 请填写 5-60 之间的数值，默认为 10 秒", p.Name, j))
-			}
-			if r.TTL < 1 || r.TTL > 86400 {
-				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ttl 请填写 1-86400 之间的数值，默认为 600 秒", p.Name, j))
 			}
 
 			// 检查record是否重名

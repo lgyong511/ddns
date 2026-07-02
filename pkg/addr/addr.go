@@ -15,8 +15,6 @@ import (
 // 返回netip.Addr切片或者error
 
 var (
-	// ErrNoIPFound 没有找到IP地址
-	ErrNoIPFound = fmt.Errorf("没有找到IP地址")
 	// ipv4Reg IPV4地址初筛正则表达式
 	ipv4Reg = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
 	// ipv6Reg IPV6地址初筛正则表达式
@@ -69,7 +67,7 @@ func extractFromString(s string) ([]netip.Addr, error) {
 	}
 
 	if len(ips) == 0 {
-		return nil, ErrNoIPFound
+		return nil, fmt.Errorf("addr extractFromString:未能从字符串中提取到有效的IP地址")
 	}
 
 	return ips, nil
