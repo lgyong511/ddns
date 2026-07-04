@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
+	github.com/lmittmann/tint v1.1.3
 	github.com/spf13/viper v1.21.0
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976
 	golang.org/x/net v0.56.0

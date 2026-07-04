@@ -6,6 +6,7 @@ import (
 	"ddns/pkg/provider"
 	"ddns/pkg/provider/aliyun"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -58,7 +59,7 @@ func (e *Engine) Start(ctx context.Context) {
 		var wg sync.WaitGroup
 		cfg, err := e.cfgManager.Get()
 		if err != nil {
-			fmt.Println("Engine启动失败！在获取配置文件是报错！err：", err)
+			slog.Error("Engine启动失败！在获取配置文件时报错！err：", "err", err)
 			//如果配置文件获取错误，要么收到ctx关闭信号退出程序
 			//要么触发配置文件重载，重启启动
 			//否则程序将组赛在此select中，直到任意通道有信号
@@ -76,7 +77,7 @@ func (e *Engine) Start(ctx context.Context) {
 		for _, provider := range cfg.Providers {
 			p, err := NewProvider(&provider)
 			if err != nil {
-				fmt.Printf("初始化服务商 [%s] 失败，跳过该服务商。Err: %v\n", provider.Name, err)
+				slog.Error("初始化服务商失败，跳过该服务商", "provider", provider.Name, "err", err)
 				continue
 			}
 			wg.Add(1)
@@ -85,7 +86,7 @@ func (e *Engine) Start(ctx context.Context) {
 				provider.Start(pctx)
 
 			}(p)
-			fmt.Printf("%v，启动成功！\n", provider.Name)
+			slog.Info("provider 已启动", "provider", provider.Name)
 		}
 
 		//没有defaut 会堵塞在select里面，直到任意分支有信号
@@ -95,10 +96,11 @@ func (e *Engine) Start(ctx context.Context) {
 			cancel()
 			//等待所有协程关闭
 			wg.Wait()
+			slog.Info("Engine 已退出")
 			//退出循环，退出本函数
 			return
 		case <-reloadChan: //处理重置信号
-			fmt.Println("检测到配置文件变化！开始热重载！！！")
+			slog.Info("检测到配置变更，开始热重载")
 			//发送关闭信号
 			cancel()
 			//等待所有协程关闭

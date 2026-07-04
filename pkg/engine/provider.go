@@ -8,6 +8,7 @@ import (
 	"ddns/pkg/utils"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -53,14 +54,14 @@ func (p *Provider) Start(ctx context.Context) {
 			defer wg.Done()
 			p.watchRecord(ctx, record)
 		}(&r)
-		fmt.Printf("[%s] 记录 %s 监听启动成功！\n", p.provider.Name, record.Name)
+		slog.Info("record 监听已启动", "provider", p.provider.Name, "record", record.Name)
 	}
 
 	<-ctx.Done()
-	fmt.Printf("[%s] Provider 正在退出...\n", p.provider.Name)
+	slog.Info("Provider 正在退出", "provider", p.provider.Name)
 
 	wg.Wait()
-	fmt.Printf("[%s] Provider 已退出\n", p.provider.Name)
+	slog.Info("Provider 已退出", "provider", p.provider.Name)
 }
 
 // watchRecord 监听单个记录的IP地址变化，并同步到DNS服务商
@@ -84,7 +85,7 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("[%s] 收到退出信号，安全退出监听。\n", record.Name)
+			slog.Info("record 监听已停止", "record", record.Name)
 			return
 		case <-ticker.C:
 			p.syncRecord(ctx, record, cacheSubDomain)
@@ -94,11 +95,13 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 
 // syncRecord 同步单个记录的IP地址变化到DNS服务商
 func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheSubDomain map[string]SubDomainInfo) {
+	// logger := slog.With(slog.String("provider", p.provider.Name), slog.String("record", record.Name))
+	logger := p.logger(record.Name)
 
 	// 获取当前IP地址
 	currentAddr, err := p.fetchCurrentAddr(ctx, record)
 	if err != nil {
-		fmt.Printf("[%s] 获取 IP 失败: %v\n", record.Name, err)
+		logger.Error("获取 IP 失败", "err", err)
 		return
 	}
 
@@ -117,13 +120,16 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheS
 		needUpdate := !exists || cache.Addr != currentAddr || time.Since(cache.LastSyncAt) >= forceInterval*time.Minute
 		// 不需要同步，退出当前循环
 		if !needUpdate {
-			fmt.Printf("[%s] 子域名 %s IP地址：%s，没有变化，不执行同步。\n", record.Name, subDomain, currentAddr)
+			//计算还有多久强制同步
+			timeUntilForceSync := time.Until(cache.LastSyncAt.Add(forceInterval * time.Minute))
+
+			logger.Info("跳过同步", "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync, "subDomain", subDomain, "currentAddr", currentAddr)
 			continue
 		}
 
 		// 执行DNS服务商操作
 		if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
-			fmt.Printf("[%s] 子域名 %s 同步失败: %v\n", record.Name, subDomain, err)
+			logger.Error("同步失败", "subDomain", subDomain, "err", err)
 			continue // 当前子域名失败，不更新缓存，下一轮重试
 		}
 		//成功，记录子域名缓存
@@ -155,6 +161,7 @@ func (p *Provider) fetchCurrentAddr(ctx context.Context, record *config.Record) 
 
 // syncToProvider 同步子域名记录到DNS服务商
 func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr) error {
+	logger := p.logger(record.Name)
 	//调用DNS运营商
 	resRecords, err := p.operator.GetSub(ctx, subDomain, record.IPVersion)
 
@@ -174,7 +181,8 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 			TTL:        record.TTL,
 		})
 		if err == nil {
-			fmt.Printf("【创建成功】子域名 [%s] -> %s\n", subDomain, currentAddr)
+
+			logger.Info("DNS记录已创建", "subDomain", subDomain, "currentAddr", currentAddr)
 		}
 		return err
 	}
@@ -195,8 +203,15 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		if err := p.operator.Update(ctx, &reqRecord); err != nil {
 			return fmt.Errorf("更新记录失败: %w", err)
 		}
-		fmt.Printf("【IP变动/例行同步】更新子域名 [%s] 成功: %s -> %s\n", subDomain, resRecord.Value, currentAddr)
-		//确认是要更新所有，还是第一个
+		logger.Info("DNS记录已更新", "subDomain", subDomain, "oldAddr", resRecord.Value, "newAddr", currentAddr)
 	}
 	return nil
+}
+
+// logger 返回一个带有 provider 和 record 字段的 slog.Logger 实例，用于记录日志
+func (p *Provider) logger(record string) *slog.Logger {
+	return slog.With(
+		"provider", p.provider.Name,
+		"record", record,
+	)
 }

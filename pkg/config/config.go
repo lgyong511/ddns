@@ -50,6 +50,7 @@ type Record struct {
 // Validate 检查配置的有效性
 func (c *Config) Validate() error {
 	var errs []error
+
 	//检查Providers
 	providerNames := make(map[string]bool)
 	for i, p := range c.Providers {
