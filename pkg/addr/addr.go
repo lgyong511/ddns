@@ -28,18 +28,18 @@ type Fetcher interface {
 	Fetch(context.Context) ([]netip.Addr, error)
 }
 
-func NewFetcher(getType string, getValue string) Fetcher {
+func NewFetcher(getType string, getValue string) (Fetcher, error) {
 	switch getType {
 	case "cmd":
-		return NewCommand(getValue)
+		return NewCommand(getValue), nil
 	case "duid":
-		return NewDuid(getValue)
+		return NewDuid(getValue), nil
 	case "nic":
-		return NewNic(getValue)
+		return NewNic(getValue), nil
 	case "url":
-		return NewUrl(getValue)
+		return NewUrl(getValue), nil
 	default:
-		return nil
+		return nil, fmt.Errorf("addr NewFetcher: 不支持的获取方式: %s", getType)
 	}
 }
 

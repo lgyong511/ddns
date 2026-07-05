@@ -22,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	// 如果没有指定配置文件路径，则使用默认路径
-	path, err := resolveCofigPath(*configPath)
+	path, err := resolveConfigPath(*configPath)
 	if err != nil {
 		slog.Error("无法解析配置文件路径", "error", err)
 		os.Exit(1)
@@ -32,7 +32,8 @@ func main() {
 	configManager := config.NewManager()
 	if err := configManager.Load(path); err != nil {
 		slog.Error("配置文件加载或校验失败，程序退出", "error", err)
-		panic(err)
+		os.Exit(1)
+
 	}
 
 	engine := engine.NewEngine(configManager)
@@ -47,7 +48,7 @@ func main() {
 }
 
 // resolveConfigPath 确定配置文件路径，如果用户没有指定，则使用程序所在目录的 conf.yaml
-func resolveCofigPath(path string) (string, error) {
+func resolveConfigPath(path string) (string, error) {
 	if path != "" {
 		return path, nil
 	}

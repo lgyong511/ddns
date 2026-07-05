@@ -140,7 +140,11 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheS
 // fetchCurrentAddr 获取经过版本过滤、规则筛选后的当前IP地址
 func (p *Provider) fetchCurrentAddr(ctx context.Context, record *config.Record) (netip.Addr, error) {
 	//获取IP地址
-	addrs, err := addr.NewFetcher(record.GetType, record.GetValue).Fetch(ctx)
+	fetcher, err := addr.NewFetcher(record.GetType, record.GetValue)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	addrs, err := fetcher.Fetch(ctx)
 	if err != nil {
 		return netip.Addr{}, err
 	}
