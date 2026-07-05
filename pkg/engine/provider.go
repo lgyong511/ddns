@@ -200,6 +200,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	for _, resRecord := range resRecords {
 		//DNS服务商返回的和本地当前IP地址相同，跳过更新
 		if resRecord.Value == currentAddr.String() {
+			logger.Info("云端解析记录未改变，无需更新", "subDomain", subDomain, "currentAddr", currentAddr)
 			continue
 		}
 		reqRecord := resRecord
