@@ -1,5 +1,12 @@
 # ==================== 阶段一：编译二进制 ====================
-FROM golang:1.23-alpine AS builder
+ARG GO_VERSION=1.26.4
+ARG TARGETOS
+ARG TARGETARCH
+
+FROM golang:${GO_VERSION}-alpine3.21 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # 设置容器内的工作目录
 WORKDIR /build
@@ -16,13 +23,13 @@ COPY . .
 
 # 3. 静态编译（去掉 CGO，并剔除调试符号以缩减体积）
 # 注意：入口是在 cmd/ddns/main.go，所以编译目标路径写 ./cmd/ddns
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o ddns ./cmd/ddns
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o ddns ./cmd/ddns
 
 # ==================== 阶段二：最小运行镜像 ====================
-FROM alpine:3.19
+FROM alpine:3.21
 
 # 安装基础的 TLS 证书（DDNS 必须要请求阿里云等 API，HTTPS 必不可少）
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk update && apk add --no-cache ca-certificates tzdata && apk upgrade --no-cache && rm -rf /var/cache/apk/*
 
 WORKDIR /app
 

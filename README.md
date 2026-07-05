@@ -196,6 +196,27 @@ records:
 - 请妥善保管 `keyId` 与 `keySecret`
 - 某些获取方式依赖当前系统环境，实际效果与系统命令输出有关
 
+## GitHub 发布
+
+你可以通过 GitHub Actions 实现自动打包发布。
+
+### 发布步骤
+
+```bash
+git add .
+git commit -m "release: v1.0.0"
+git tag v1.0.0
+git push origin main --tags
+```
+
+推送标签后，仓库会自动触发工作流，生成以下平台的二进制文件并上传到 GitHub Release：
+
+- linux/amd64
+- linux/arm64
+- darwin/amd64
+- darwin/arm64
+- windows/amd64
+
 ## 许可证
 
 本项目为示例性代码仓库，使用时请根据实际需求自行评估合规性与安全性。

@@ -97,9 +97,10 @@ func (c *Config) Validate() error {
 			}
 			recordNames[r.Name] = true
 		}
-		if len(errs) > 0 {
-			return errors.Join(errs...)
-		}
+
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }

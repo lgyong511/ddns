@@ -305,6 +305,18 @@ func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp struct {
+			Code    string `json:"Code"`
+			Message string `json:"Message"`
+		}
+		// 尝试解析错误 body，如果连 json 都不是，就把原生字符串丢出来
+		if json.Unmarshal(respBytes, &errResp) == nil && errResp.Code != "" {
+			return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: Code=%s, Message=%s", resp.StatusCode, errResp.Code, errResp.Message)
+		}
+		return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
 	return respBytes, nil
 }
 

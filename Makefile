@@ -1,6 +1,7 @@
 .PHONY: all build run clean docker-build docker-run
 
 # 变量定义
+CURRENT_DIR := $(CURDIR)
 BINARY_NAME=ddns
 MAIN_PATH=./cmd/ddns
 DOCKER_IMAGE_NAME=my-ddns-service:latest
@@ -30,9 +31,9 @@ docker-build:
 	docker build -t $(DOCKER_IMAGE_NAME) .
 	@echo "镜像构建成功！"
 
-## docker-run: 快速在容器中测试运行
-docker-run:
+## docker-run: 快速在容器中测试运行（运行前自动构建最新镜像）
+docker-run: docker-build
 	@echo "正在启动容器..."
 	docker run --rm -it \
-		-v $(PWD)/conf.yaml:/app/conf.yaml \
+		-v $(CURRENT_DIR)/conf.yaml:/app/conf.yaml \
 		$(DOCKER_IMAGE_NAME)
