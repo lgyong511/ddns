@@ -25,11 +25,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o ddns ./cmd/ddns
 
 # ==================== 阶段二：最小运行镜像 ====================
-FROM alpine:3.24
+FROM openwrt/rootfs:latest
 
-# 安装基础的 TLS 证书（DDNS 必须要请求阿里云等 API，HTTPS 必不可少）
-RUN apk update && apk add --no-cache ca-certificates tzdata libubox libubus ubus rpcd && apk upgrade --no-cache && rm -rf /var/cache/apk/*
-
+# OpenWrt 根文件系统已经带有 ubus 相关能力，保留必要的工作目录
 WORKDIR /app
 RUN mkdir -p /app/bin /app/config
 
