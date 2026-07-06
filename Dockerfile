@@ -10,9 +10,6 @@ ARG TARGETARCH
 # 设置容器内的工作目录
 WORKDIR /build
 
-# 换源加速（如果在国内服务器构建，建议保留；海外可删掉下一行）
-ENV GOPROXY=https://goproxy.cn,direct
-
 # 1. 优先复制依赖文件并下载，利用 Docker 缓存层
 COPY go.mod go.sum ./
 RUN go mod download
@@ -24,19 +21,29 @@ COPY . .
 # 注意：入口是在 cmd/ddns/main.go，所以编译目标路径写 ./cmd/ddns
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o ddns ./cmd/ddns
 
-# ==================== 阶段二：最小运行镜像 ====================
-FROM openwrt/rootfs:latest
+# ==================== 阶段二：准备多架构的 OpenWrt 底座 ====================
+FROM openwrt/rootfs:x86-64 AS base-amd64
+FROM openwrt/rootfs:aarch64_generic AS base-arm64
 
-# OpenWrt 根文件系统已经带有 ubus 相关能力，保留必要的工作目录
+# ==================== 阶段三：动态选择并打包 ====================
+FROM base-${TARGETARCH}
+
+ARG TARGETOS
+ARG TARGETARCH
+
+# OpenWrt 的包管理器是 opkg，安装证书保障 HTTPS 请求
+RUN opkg update && \
+    opkg install ca-bundle && \
+    rm -rf /var/opkg-lists/*
+
 WORKDIR /app
 RUN mkdir -p /app/bin /app/config
 
-# 从 builder 阶段把编译好的二进制文件偷过来
+# 从 builder 阶段把编译好的二进制文件拿过来
 COPY --from=builder /build/ddns /app/bin/ddns
+RUN chmod +x /app/bin/ddns
 
-# 声明挂载点（容器内配置文件目录）
+# 声明挂载点
 VOLUME ["/app/config"]
 
-# 终极清爽启动命令：
-# 显式指定容器内配置文件路径
 ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml"]
