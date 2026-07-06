@@ -1,6 +1,7 @@
 package addr
 
 import (
+	"fmt"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -69,6 +70,7 @@ func (s *Splice) Select(addrs []netip.Addr) netip.Addr {
 	}
 	splicedAddr, err := SpliceIPv6(addr, s.Suffix)
 	if err != nil {
+		fmt.Printf("Splice select err: %v\n", err)
 		return netip.Addr{}
 	}
 	return splicedAddr

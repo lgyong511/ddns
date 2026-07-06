@@ -28,16 +28,17 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w
 FROM alpine:3.24
 
 # 安装基础的 TLS 证书（DDNS 必须要请求阿里云等 API，HTTPS 必不可少）
-RUN apk update && apk add --no-cache ca-certificates tzdata && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+RUN apk update && apk add --no-cache ca-certificates tzdata libubox libubus ubus rpcd && apk upgrade --no-cache && rm -rf /var/cache/apk/*
 
 WORKDIR /app
+RUN mkdir -p /app/bin /app/config
 
 # 从 builder 阶段把编译好的二进制文件偷过来
-COPY --from=builder /build/ddns .
+COPY --from=builder /build/ddns /app/bin/ddns
 
-# 声明挂载点（直接映射宿主机的配置文件到程序同级的 conf.yaml）
-VOLUME ["/app/conf.yaml"]
+# 声明挂载点（容器内配置文件目录）
+VOLUME ["/app/config"]
 
 # 终极清爽启动命令：
-# 代码有默认路径兜底，直接运行即可自动加载 /app/conf.yaml
-ENTRYPOINT ["./ddns"]
+# 显式指定容器内配置文件路径
+ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml"]

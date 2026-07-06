@@ -95,11 +95,22 @@ make docker-build
 
 ### 运行容器
 
+如果你想把宿主机上的配置文件挂载到容器中，并且让容器可以访问 OpenWrt 的 `ubus` socket，可以使用下面的命令：
+
+```bash
+docker run -d \
+  --name ddns \
+  --restart always \
+  -v /app/config/conf.yaml:/app/config/conf.yaml \
+  -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
+  ghcr.io/lgyong511/ddns:latest
+```
+
+如果你使用的是项目自带的 Makefile，也可以用下面的方式启动：
+
 ```bash
 make docker-run
 ```
-
-Docker 启动时会挂载宿主机上的 `conf.yaml` 到容器内的 `/app/conf.yaml`。
 
 ## 配置说明
 

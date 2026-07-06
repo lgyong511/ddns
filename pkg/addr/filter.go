@@ -91,7 +91,15 @@ func SpliceIPv6(addr netip.Addr, suffix string) (netip.Addr, error) {
 	// 2. 解析后缀地址（例如将 "::1"、“::9209:d0ff:fe09:781d“ 解析为标准的 netip.Addr）
 	suffixAddr, err := netip.ParseAddr(suffix)
 	if err != nil {
-		return netip.Addr{}, fmt.Errorf("SpliceIPv6: 后缀格式非法: %w", err)
+		// 移除开头可能存在的任意多个冒号（兼容 ":" 或 "::"）
+		cleanSuffix := strings.TrimLeft(suffix, ":")
+
+		// 统一在前面加上标准的双冒号 "::" 重新解析
+		var retryErr error
+		suffixAddr, retryErr = netip.ParseAddr("::" + cleanSuffix)
+		if retryErr != nil {
+			return netip.Addr{}, fmt.Errorf("SpliceIPv6: 后缀格式非法: %w", err)
+		}
 	}
 
 	// 3. 提取两者的字节数组
