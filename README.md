@@ -87,30 +87,56 @@ make run
 
 ## Docker 运行
 
-### 构建镜像
+项目当前提供两种镜像构建目标：
+
+- `generic`：轻量通用版，基于 Alpine，适合普通场景
+- `openwrt`：面向软路由 / OpenWrt 场景的镜像，适合挂载 `ubus` socket
+
+### 1. 构建通用版镜像
 
 ```bash
-make docker-build
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --target generic \
+  -t lgyong/ddns:generic \
+  --push .
 ```
 
-### 运行容器
-
-如果你想把宿主机上的配置文件挂载到容器中，并且让容器可以访问 OpenWrt 的 `ubus` socket，可以使用下面的命令：
+### 2. 构建 OpenWrt 版镜像
 
 ```bash
-docker run -d \
-  --name ddns \
-  --restart always \
-  -v /app/config/conf.yaml:/app/config/conf.yaml \
+docker buildx build \
+  --platform linux/amd64 \
+  --target openwrt \
+  --build-arg OPENWRT_TAG=x86-64 \
+  -t lgyong/ddns:openwrt \
+  --push .
+```
+
+### 3. 运行容器
+
+通用版：
+
+```bash
+docker run -d --name ddns --restart always \
+  -v /path/to/conf.yaml:/app/config/conf.yaml \
+  lgyong/ddns:generic
+```
+
+OpenWrt 版（需要挂载宿主机 `ubus` socket）：
+
+```bash
+docker run -d --name ddns --restart always \
+  -v /path/to/conf.yaml:/app/config/conf.yaml \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
-  ghcr.io/lgyong511/ddns:latest
+  lgyong/ddns:openwrt
 ```
 
-如果你使用的是项目自带的 Makefile，也可以用下面的方式启动：
+### 4. GitHub Actions 自动发布
 
-```bash
-make docker-run
-```
+推送标签后，工作流会自动：
+- 构建 Go 二进制并上传到 GitHub Release
+- 推送 `generic` 和 `openwrt` 两种 Docker 镜像到 GHCR
 
 ## 配置说明
 
