@@ -5,7 +5,7 @@ on:
     tags:
       - "v*"
 
-# 统一在最顶层配置完整的写入权限，防止子任务因声明 packages: write 而覆盖掉 contents 权限
+# 统一在最顶层配置完整的写入权限
 permissions:
   contents: write
   packages: write
@@ -57,7 +57,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ================= 任务 2：构建通用版 Docker 镜像 (并发 A) =================
+  # ================= 任务 2：构建通用版 Docker 镜像 =================
   docker-generic:
     runs-on: ubuntu-latest
     needs: build-binaries
@@ -90,19 +90,10 @@ jobs:
             ghcr.io/${{ env.OWNER }}/ddns:${{ github.ref_name }}
             ghcr.io/${{ env.OWNER }}/ddns:latest
 
-  # ================= 任务 3：矩阵并发构建软路由专用版 (并发 B 和 C) =================
+  # ================= 任务 3：构建软路由专用版 (纯粹的单步 x86 任务) =================
   docker-openwrt:
     runs-on: ubuntu-latest
     needs: build-binaries
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            openwrt_tag: x86-64
-            suffix: amd64
-          - platform: linux/arm64
-            openwrt_tag: aarch64_cortex-a53
-            suffix: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -126,10 +117,8 @@ jobs:
           context: .
           file: Dockerfile
           target: openwrt
-          build-args: |
-            OPENWRT_TAG=${{ matrix.openwrt_tag }}
           push: true
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64
           tags: |
-            ghcr.io/${{ env.OWNER }}/ddns:${{ github.ref_name }}-openwrt-${{ matrix.suffix }}
-            ghcr.io/${{ env.OWNER }}/ddns:latest-openwrt-${{ matrix.suffix }}
+            ghcr.io/${{ env.OWNER }}/ddns:${{ github.ref_name }}-openwrt
+            ghcr.io/${{ env.OWNER }}/ddns:latest-openwrt

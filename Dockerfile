@@ -1,7 +1,4 @@
-# 关键修复 1：在最顶部、第一个 FROM 之前声明全局 ARG，让整个文件（包括所有 FROM）都能看见它
-ARG OPENWRT_TAG=x86-64
-
-# ==================== 阶段一：编译二进制 ====================
+# ==================== 阶段一：编译 Go 二进制 ====================
 FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine3.24 AS builder
 
 ARG TARGETOS
@@ -21,20 +18,17 @@ FROM alpine:3.24 AS base-generic
 RUN apk add --no-cache ca-certificates tzdata
 
 
-# ==================== 阶段三：软路由专用版底座 (支持外部传入 Tag) ====================
-# 关键修复 2：在阶段内部重新继承一次全局的 OPENWRT_TAG 变量，这样 IDE 绝对不会报 Undefined 错误
-ARG OPENWRT_TAG
-FROM openwrt/rootfs:${OPENWRT_TAG} AS base-openwrt
-# 关键修复 3：在 openwrt 镜像中安装 inotifywait 工具，热加载支持
-RUN apk add --no-cache  inotifywait
+# ==================== 阶段三：软路由专用版底座 ====================
+FROM openwrt/rootfs:x86-64 AS base-openwrt
 
-# 复制证书
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# 🚀 优化：既然自带 apk，直接一次性完整安装 inotifywait、证书和时区数据，更加工业化
+RUN apk update && \
+    apk add --no-cache inotifywait 
 
 
-# ==================== 阶段四：最终打包 ====================
+# ==================== 阶段四：最终输出目标 ====================
 
-# 4a. 通用版
+# 4a. 最终打包：通用版（支持多架构 amd64, arm64）
 FROM base-generic AS generic
 WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
@@ -42,7 +36,7 @@ RUN chmod +x /app/bin/ddns
 VOLUME ["/app/config"]
 ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml"]
 
-# 4b. 软路由专用版
+# 4b. 最终打包：软路由专用版（由于 Actions 矩阵已改，实际仅构建 amd64）
 FROM base-openwrt AS openwrt
 WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
@@ -50,11 +44,12 @@ RUN chmod +x /app/bin/ddns
 VOLUME ["/app/config"]
 ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml"]
 
-#构建通用版镜像
-#docker buildx build   --platform linux/amd64,linux/arm64   --target generic   -t lgyong/ddns:latest   -t lgyong/ddns:alpine   --push .
 
-#构建openwrt x86-64镜像
-#docker buildx build   --platform linux/amd64   --target openwrt   --build-arg OPENWRT_TAG=x86-64   -t lgyong/ddns:openwrt-amd64   --push .
-
-#构建openwrt arm64镜像
-#docker buildx build   --platform linux/arm64   --target openwrt   --build-arg OPENWRT_TAG=aarch64_cortex-a53   -t lgyong/ddns:openwrt-arm64   --push .
+# ==============================================================================
+# 本地手动构建备忘命令（清理了已作废的 ARM 软路由构建命令）
+# ==============================================================================
+# 构建通用版镜像（双架构）：
+# docker buildx build --platform linux/amd64 --target generic -t lgyong/ddns:latest -t lgyong/ddns:alpine --push .
+#
+# 构建 OpenWrt x86-64 软路由镜像：
+# docker buildx build --platform linux/amd64 --target openwrt  -t lgyong/ddns:openwrt-amd64 --push .
