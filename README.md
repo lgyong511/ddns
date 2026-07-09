@@ -112,6 +112,14 @@ docker buildx build \
   -t lgyong/ddns:openwrt \
   --push .
 ```
+```bash
+docker buildx build \
+  --platform linux/arm64 \
+  --target openwrt \
+  --build-arg OPENWRT_TAG=x86-64 \
+  -t lgyong/ddns:openwrt \
+  --push .
+```
 
 ### 3. 运行容器
 
@@ -119,19 +127,27 @@ docker buildx build \
 
 ```bash
 docker run -d --name ddns --restart always \
-  -v /path/to/conf.yaml:/app/config/conf.yaml \
-  lgyong/ddns:generic
+  --net=host \
+  -v /app/:/app/config/ \
+  ghcr.io/lgyong511/ddns:v1.0.0
 ```
 
 OpenWrt 版（需要挂载宿主机 `ubus` socket）：
 
 ```bash
 docker run -d --name ddns --restart always \
-  -v /path/to/conf.yaml:/app/config/conf.yaml \
+  --net=host \
+  -v /app/:/app/config/ \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
-  lgyong/ddns:openwrt
+  ghcr.io/lgyong511/ddns:v1.0.0-openwrt-amd64
 ```
-
+```bash
+docker run -d --name ddns --restart always \
+  --net=host \
+  -v /app/:/app/config/ \
+  -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
+  ghcr.io/lgyong511/ddns:v1.0.0-openwrt-arm64
+```
 ### 4. GitHub Actions 自动发布
 
 推送标签后，工作流会自动：

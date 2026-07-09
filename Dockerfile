@@ -25,6 +25,8 @@ RUN apk add --no-cache ca-certificates tzdata
 # 关键修复 2：在阶段内部重新继承一次全局的 OPENWRT_TAG 变量，这样 IDE 绝对不会报 Undefined 错误
 ARG OPENWRT_TAG
 FROM openwrt/rootfs:${OPENWRT_TAG} AS base-openwrt
+# 关键修复 3：在 openwrt 镜像中安装 inotifywait 工具，热加载支持
+RUN apk add --no-cache  inotifywait
 
 # 复制证书
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
