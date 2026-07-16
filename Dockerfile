@@ -22,8 +22,7 @@ RUN apk add --no-cache ca-certificates tzdata
 FROM openwrt/rootfs:x86-64 AS base-openwrt
 
 # 🚀 优化：既然自带 apk，直接一次性完整安装 inotifywait、证书和时区数据，更加工业化
-RUN apk update && \
-    apk add --no-cache inotifywait 
+RUN apk add --no-cache inotifywait ca-certificates zoneinfo-all
 
 
 # ==================== 阶段四：最终输出目标 ====================

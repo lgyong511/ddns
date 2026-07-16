@@ -5,6 +5,7 @@ import (
 	"ddns/pkg/config"
 	"ddns/pkg/provider"
 	"ddns/pkg/provider/aliyun"
+	"ddns/pkg/provider/tencent"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -23,6 +24,8 @@ func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error
 	switch provider {
 	case "aliyun":
 		return aliyun.NewAliyun(accessKeyId, accessKeySecret), nil
+	case "tencent":
+		return tencent.NewTencent(accessKeyId, accessKeySecret), nil
 	default:
 		return nil, fmt.Errorf("不支持的DNS运营商：%v", provider)
 	}

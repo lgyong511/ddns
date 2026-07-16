@@ -20,8 +20,8 @@ import (
 
 const (
 	// dns服务器地址
-	host = "alidns.cn-hangzhou.aliyuncs.com"
-	// host ="alidns.aliyuncs.com"
+	//host = "alidns.cn-hangzhou.aliyuncs.com"
+	host = "alidns.aliyuncs.com"
 
 	// API接口版本
 	version = "2015-01-09"
@@ -130,12 +130,8 @@ func (a *Aliyun) Update(ctx context.Context, r *provider.Record) error {
 	if r.RecordId == "" {
 		return fmt.Errorf("Aliyun Update: RecordID是空值")
 	}
-	_, err := a.addAndUpdate(ctx, r)
-	if err != nil {
-		return err
-	}
 
-	return nil
+	return a.addAndUpdate(ctx, r)
 }
 
 // Create 创建域名解析记录
@@ -146,23 +142,13 @@ func (a *Aliyun) Create(ctx context.Context, r *provider.Record) (*provider.Reco
 	if r.DomainName == "" {
 		return nil, fmt.Errorf("Aliyun Create: DomainName是空值")
 	}
-	res, err := a.addAndUpdate(ctx, r)
-	if err != nil {
+
+	// 一行调用，错误由底层抛出，ID 由底层内部通过指针自动回填
+	if err := a.addAndUpdate(ctx, r); err != nil {
 		return nil, err
 	}
 
-	//解析返回，获取RecordID
-	var tempResp struct {
-		RequestId string `json:"RequestId"`
-		RecordId  string `json:"RecordId"`
-	}
-	if err := json.Unmarshal(res, &tempResp); err != nil {
-		return nil, fmt.Errorf("Aliyun Create: 解析 JSON 失败: %v", err)
-	}
-	if tempResp.RecordId == "" {
-		return nil, fmt.Errorf("Aliyun Create: RecordID is empty")
-	}
-	r.RecordId = tempResp.RecordId
+	// 执行到这里时，r.RecordId 已经有值了，直接返回给上层业务
 	return r, nil
 }
 
@@ -170,7 +156,7 @@ func (a *Aliyun) Create(ctx context.Context, r *provider.Record) (*provider.Reco
 // 参数说明：
 // ctx: 上下文，用于控制超时和取消
 // RecordId: 记录ID
-func (a *Aliyun) Delete(ctx context.Context, recordId string) error {
+func (a *Aliyun) Delete(ctx context.Context, recordId, domain string) error {
 	//验证参数是否合法
 	if a.AccessKeyId == "" {
 		return fmt.Errorf("Aliyun Delete: AccessKeyId is empty")
@@ -201,69 +187,70 @@ func (a *Aliyun) Delete(ctx context.Context, recordId string) error {
 
 // addAndUpdate 添加或更新域名解析记录，处理API返回的错误
 // TTL 最大值86400,最小值1,建议值600
-func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) ([]byte, error) {
-	//验证参数是否合法
-	if a.AccessKeyId == "" {
-		return nil, fmt.Errorf("addAndUpdate: AccessKeyId is empty")
-	}
-	if a.AccessKeySecret == "" {
-		return nil, fmt.Errorf("addAndUpdate: AccessKeySecret is empty")
+// 优化后：去掉 []byte 返回值，只保留 error
+func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
+	// 1. 验证参数是否合法
+	if a.AccessKeyId == "" || a.AccessKeySecret == "" {
+		return fmt.Errorf("addAndUpdate: 凭证不能为空")
 	}
 	if r.TTL > 86400 || r.TTL < 1 {
 		r.TTL = 600
 	}
 	if r.RR == "" || r.Type == "" || r.Value == "" {
-		return nil, fmt.Errorf("addAndUpdate: 参数不完整！%v", r)
+		return fmt.Errorf("addAndUpdate: 参数不完整！%v", r)
 	}
 
 	var req *request
 	body := make(map[string]interface{})
 
-	//判断是新增记录还是更新记录，更新记录需要传入RecordID
-	if r.RecordId == "" { //新增记录
+	// 判断是新增记录还是更新记录
+	if r.RecordId == "" {
 		req = newRequest("POST", "AddDomainRecord")
 		body["DomainName"] = r.DomainName
-		body["RR"] = r.RR
-		body["Type"] = r.Type
-		body["Value"] = r.Value
-		body["TTL"] = r.TTL
-	} else { //更新记录
+	} else {
 		req = newRequest("POST", "UpdateDomainRecord")
-		body["Type"] = r.Type
-		body["RR"] = r.RR
 		body["RecordId"] = r.RecordId
-		body["Value"] = r.Value
-		body["TTL"] = r.TTL
 	}
+	body["Type"] = r.Type
+	body["RR"] = r.RR
+	body["Value"] = r.Value
+	body["TTL"] = r.TTL
 
 	req.headers["content-type"] = "application/x-www-form-urlencoded"
-
 	str := formDataToString(body)
 	req.body = []byte(*str)
-	// 签名
+
+	// 2. 签名与请求
 	if err := a.sign(req); err != nil {
-		return nil, fmt.Errorf("addAndUpdate: 签名失败！: %v", err)
+		return fmt.Errorf("addAndUpdate: 签名失败！: %v", err)
 	}
-	// 发送请求
 	res, err := a.do(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("addAndUpdate: 请求API失败！: %v", err)
+		return fmt.Errorf("addAndUpdate: 请求API失败！: %v", err)
 	}
 
-	// 解析是否返回错误
+	// 3. 定义一个复合匿名结构体，把“业务错误”和“成功返回的 RecordId”一网打尽
 	var tempResp struct {
-		Code    string `json:"Code"`
-		Message string `json:"Message"`
+		Code      string `json:"Code"`     // 错误码
+		Message   string `json:"Message"`  // 错误信息
+		RecordId  string `json:"RecordId"` // 阿里云创建成功时返回的 ID (注意：阿里云返回的是字符串)
+		RequestId string `json:"RequestId"`
 	}
 	if err := json.Unmarshal(res, &tempResp); err != nil {
-		return nil, fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(res))
-	}
-	//请求成功Code是没有的，如果Code不为空说明请求失败，返回错误信息
-	if tempResp.Code != "" {
-		return nil, fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", tempResp.Code, tempResp.Message)
+		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(res))
 	}
 
-	return res, nil
+	// 4. 优先拦截并返回业务错误
+	if tempResp.Code != "" {
+		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", tempResp.Code, tempResp.Message)
+	}
+
+	// 5. 如果是新增记录，直接把阿里云下发的 RecordId 回填给指针对象
+	if r.RecordId == "" && tempResp.RecordId != "" {
+		r.RecordId = tempResp.RecordId
+	}
+
+	return nil
 }
 
 // do 发送请求
@@ -347,7 +334,8 @@ func parseResponse(res []byte) ([]provider.Record, error) {
 	}
 
 	// --- 转换为通用 domain.Record ---
-	var records []provider.Record
+	//使用make预分配内存，减少append内存扩容
+	records := make([]provider.Record, 0, len(tempResp.DomainRecords.Record))
 	for _, r := range tempResp.DomainRecords.Record {
 		records = append(records, provider.Record{
 			RecordId:   r.RecordId,

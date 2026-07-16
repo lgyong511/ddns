@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -86,10 +87,11 @@ func (m *Manager) watchConfig() {
 		}
 		m.rwMutex.Lock()
 		m.config = &cfg
+		callbacks := slices.Clone(m.callbacks)
 		m.rwMutex.Unlock()
 
 		// 调用回调函数
-		for _, cb := range m.callbacks {
+		for _, cb := range callbacks {
 			cb()
 		}
 	})

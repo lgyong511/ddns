@@ -58,16 +58,20 @@ func (c *Config) Validate() error {
 		if p.Name == "" {
 			errs = append(errs, fmt.Errorf("providers[%d].name 不能为空", i))
 		}
-		if p.KeyID == "" || p.KeySecret == "" {
-			errs = append(errs, fmt.Errorf("providers[%s] 的 keyId 和 keySecret 不能为空", p.Name))
+		if p.KeyID == "" {
+			errs = append(errs, fmt.Errorf("providers[%d].KeyID  不能为空", i))
+		}
+		if p.KeySecret == "" {
+			errs = append(errs, fmt.Errorf("providers[%d].keySecret 不能为空", i))
+
 		}
 		if p.Provider == "" {
-			errs = append(errs, fmt.Errorf("providers[%s].provider 不能为空", p.Name))
+			errs = append(errs, fmt.Errorf("providers[%d].provider 不能为空", i))
 		}
 
 		// 检查provider是否重名
 		if providerNames[p.Name] {
-			errs = append(errs, fmt.Errorf("providers[%s].name 重复: %s", p.Name, p.Name))
+			errs = append(errs, fmt.Errorf("providers[%d].name 重复: %s", i, p.Name))
 		}
 		providerNames[p.Name] = true
 

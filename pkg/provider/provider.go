@@ -36,7 +36,7 @@ type Creator interface {
 // Deleter 域名解析记录删除接口
 type Deleter interface {
 	// Delete 删除指定域名解析记录
-	Delete(context.Context, string) error
+	Delete(context.Context, string, string) error
 }
 
 // Version 解析记录类型版本

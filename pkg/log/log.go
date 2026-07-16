@@ -19,7 +19,8 @@ func InitLog() {
 	var handler slog.Handler
 
 	handler = tint.NewHandler(output, &tint.Options{
-		Level: slog.LevelInfo,
+		Level:      slog.LevelInfo,
+		TimeFormat: "2006-01-02 15:04:05",
 	})
 
 	slog.SetDefault(slog.New(handler))
