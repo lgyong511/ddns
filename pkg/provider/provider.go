@@ -4,10 +4,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"time"
 )
 
 var (
+	// ErrRecordNotFound dns服务商没有查询到记录
 	ErrRecordNotFound = errors.New("record not found")
+
+	// HTTPClient 全局共享的 HTTP 客户端
+	HTTPClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			// Proxy: http.ProxyFromEnvironment, // 自动读取系统的 HTTP_PROXY / HTTPS_PROXY
+			DialContext: (&net.Dialer{
+				Timeout:   5 * time.Second,  // 建立连接超时
+				KeepAlive: 30 * time.Second, // 保持心跳
+			}).DialContext,
+			MaxIdleConns:        100,              // 全局最大空闲连接
+			MaxIdleConnsPerHost: 10,               // 每个服务商的最大空闲连接
+			IdleConnTimeout:     90 * time.Second, // 90秒无操作自动释放连接
+		},
+	}
 )
 
 // Getter 域名解析记录获取接口

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"time"
 
 	"golang.org/x/exp/maps"
 	"golang.org/x/time/rate"
@@ -35,7 +34,6 @@ const (
 type Aliyun struct {
 	AccessKeyId     string
 	AccessKeySecret string
-	client          *http.Client
 	limiter         *rate.Limiter
 }
 
@@ -46,7 +44,6 @@ func NewAliyun(accessKeyId, accessKeySecret string) *Aliyun {
 	return &Aliyun{
 		AccessKeyId:     accessKeyId,
 		AccessKeySecret: accessKeySecret,
-		client:          &http.Client{Timeout: 15 * time.Second},
 		limiter:         rate.NewLimiter(5, 10), // 每秒5次请求，允许突发10次
 	}
 }
@@ -80,12 +77,12 @@ func (a *Aliyun) GetAll(ctx context.Context, domain string, v provider.Version) 
 	}
 
 	//发送请求
-	res, err := a.do(ctx, req)
+	resp, err := a.do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseResponse(res)
+	return parseResponse(resp)
 }
 
 // GetSub 获取域名解析记录
@@ -114,12 +111,12 @@ func (a *Aliyun) GetSub(ctx context.Context, subdomain string, v provider.Versio
 	}
 
 	//发送请求
-	res, err := a.do(ctx, req)
+	resp, err := a.do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseResponse(res)
+	return parseResponse(resp)
 }
 
 // Update 更新域名解析记录
@@ -222,30 +219,30 @@ func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
 	if err := a.sign(req); err != nil {
 		return fmt.Errorf("addAndUpdate: 签名失败！: %v", err)
 	}
-	res, err := a.do(ctx, req)
+	resp, err := a.do(ctx, req)
 	if err != nil {
 		return fmt.Errorf("addAndUpdate: 请求API失败！: %v", err)
 	}
 
 	// 定义一个复合匿名结构体
-	var tempResp struct {
+	var respData struct {
 		Code      string `json:"Code"`
 		Message   string `json:"Message"`
 		RecordId  string `json:"RecordId"`
 		RequestId string `json:"RequestId"`
 	}
-	if err := json.Unmarshal(res, &tempResp); err != nil {
-		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(res))
+	if err := json.Unmarshal(resp, &respData); err != nil {
+		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(resp))
 	}
 
 	// 优先拦截并返回业务错误
-	if tempResp.Code != "" {
-		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", tempResp.Code, tempResp.Message)
+	if respData.Code != "" {
+		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", respData.Code, respData.Message)
 	}
 
 	// 如果是新增记录，直接把阿里云下发的 RecordId 回填给指针对象
-	if r.RecordId == "" && tempResp.RecordId != "" {
-		r.RecordId = tempResp.RecordId
+	if r.RecordId == "" && respData.RecordId != "" {
+		r.RecordId = respData.RecordId
 	}
 
 	return nil
@@ -280,7 +277,7 @@ func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
 		httpReq.Header.Set(key, value)
 	}
 
-	resp, err := a.client.Do(httpReq)
+	resp, err := provider.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -292,13 +289,13 @@ func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var errResp struct {
+		var respData struct {
 			Code    string `json:"Code"`
 			Message string `json:"Message"`
 		}
 		// 尝试解析错误 body，如果连 json 都不是，就把原生字符串丢出来
-		if json.Unmarshal(respBytes, &errResp) == nil && errResp.Code != "" {
-			return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: Code=%s, Message=%s", resp.StatusCode, errResp.Code, errResp.Message)
+		if json.Unmarshal(respBytes, &respData) == nil && respData.Code != "" {
+			return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: Code=%s, Message=%s", resp.StatusCode, respData.Code, respData.Message)
 		}
 		return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: %s", resp.StatusCode, string(respBytes))
 	}
@@ -307,9 +304,9 @@ func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
 
 // 解析返回值，把记录列表转换成domain.Record
 // 返回值：[]Record: 记录列表，error: 错误信息，没有记录返回ErrRecordNotFound
-func parseResponse(res []byte) ([]provider.Record, error) {
+func parseResponse(resp []byte) ([]provider.Record, error) {
 	// --- 使用匿名结构体解析 ---
-	var tempResp struct {
+	var respData struct {
 		TotalCount    int `json:"TotalCount"`
 		DomainRecords struct {
 			Record []struct {
@@ -323,18 +320,18 @@ func parseResponse(res []byte) ([]provider.Record, error) {
 		} `json:"DomainRecords"`
 	}
 
-	if err := json.Unmarshal(res, &tempResp); err != nil {
-		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, string(res))
+	if err := json.Unmarshal(resp, &respData); err != nil {
+		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, string(resp))
 	}
 
-	if tempResp.TotalCount == 0 {
+	if respData.TotalCount == 0 {
 		return nil, provider.ErrRecordNotFound
 	}
 
 	// --- 转换为通用 domain.Record ---
 	//使用make预分配内存，减少append内存扩容
-	records := make([]provider.Record, 0, len(tempResp.DomainRecords.Record))
-	for _, r := range tempResp.DomainRecords.Record {
+	records := make([]provider.Record, 0, len(respData.DomainRecords.Record))
+	for _, r := range respData.DomainRecords.Record {
 		records = append(records, provider.Record{
 			RecordId:   r.RecordId,
 			DomainName: r.DomainName,
@@ -345,7 +342,7 @@ func parseResponse(res []byte) ([]provider.Record, error) {
 		})
 	}
 	if len(records) == 0 {
-		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(res))
+		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(resp))
 	}
 
 	return records, nil

@@ -29,22 +29,30 @@ const (
 	contentType = "application/json; charset=utf-8"
 )
 
+// Tencent 腾讯云DNS
 type Tencent struct {
 	secretId  string
 	secretKey string
-	client    *http.Client
 	limiter   *rate.Limiter
 }
 
+// NewTencent 新建腾讯云DNS
+// 参数说明：
+// accessKeyId和accessKeySecret：腾讯云密钥
 func NewTencent(accessKeyId, accessKeySecret string) *Tencent {
 	return &Tencent{
 		secretId:  accessKeyId,
 		secretKey: accessKeySecret,
-		client:    &http.Client{Timeout: 15 * time.Second},
 		limiter:   rate.NewLimiter(5, 10), // 每秒限制5次请求
 	}
 }
 
+// GetAll 获取所有域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// domain: 域名，例如example.com
+// provider.Version: IP地址版本，所有/4/6
+// 返回值：[]provider.Record: 记录列表，error: 错误信息，ErrRecordNotFound:没有记录
 func (t *Tencent) GetAll(ctx context.Context, domain string, v provider.Version) ([]provider.Record, error) {
 	if t.secretId == "" || t.secretKey == "" {
 		return nil, fmt.Errorf("Tencent GetAll: secretId 或 secretKey 为空值")
@@ -64,14 +72,20 @@ func (t *Tencent) GetAll(ctx context.Context, domain string, v provider.Version)
 		return nil, fmt.Errorf("json序列化请求体失败，err：%v", err)
 	}
 
-	res, err := t.do(ctx, "DescribeRecordList", string(jsonPayload))
+	resp, err := t.do(ctx, "DescribeRecordList", string(jsonPayload))
 	if err != nil {
 		return nil, err
 	}
 
-	return parseResponse(res, domain)
+	return parseResponse(resp, domain)
 }
 
+// GetSub 获取域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// subdomain: 子域名，例如www.example.com
+// provider.Version: IP地址版本，4/6
+// 返回值：[]provider.Record: 记录列表，error: 错误信息，ErrRecordNotFound:没有记录
 func (t *Tencent) GetSub(ctx context.Context, subdomain string, v provider.Version) ([]provider.Record, error) {
 	if t.secretId == "" || t.secretKey == "" {
 		return nil, fmt.Errorf("Tencent GetAll: secretId 或 secretKey 为空值")
@@ -103,7 +117,10 @@ func (t *Tencent) GetSub(ctx context.Context, subdomain string, v provider.Versi
 	return parseResponse(resp, domain)
 }
 
-// 实现 Creator 接口
+// Create 创建域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// Record: 记录信息，必传DomainName、RR、Type、Value、TTL
 func (t *Tencent) Create(ctx context.Context, r *provider.Record) (*provider.Record, error) {
 	// 此时传入的 r.RecordId 应该是 ""
 	if err := t.addAndUpdate(ctx, r); err != nil {
@@ -113,12 +130,20 @@ func (t *Tencent) Create(ctx context.Context, r *provider.Record) (*provider.Rec
 	return r, nil
 }
 
-// 实现 Updater 接口
+// Update 更新域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// Record: 记录信息，必传RecordID、RR、Type、Value
 func (t *Tencent) Update(ctx context.Context, r *provider.Record) error {
 	// 此时传入的 r.RecordId 应该是有具体值的
 	return t.addAndUpdate(ctx, r)
 }
 
+// Delete 删除域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// recordId: 记录ID
+// domain: 域名
 func (t *Tencent) Delete(ctx context.Context, recordId, domain string) error {
 	if t.secretId == "" || t.secretKey == "" {
 		return fmt.Errorf("Tencent GetAll: secretId 或 secretKey 为空值")
@@ -148,7 +173,7 @@ func (t *Tencent) Delete(ctx context.Context, recordId, domain string) error {
 		return err
 	}
 
-	var tempResp struct {
+	var respData struct {
 		Response struct {
 			Error struct {
 				Code    string `json:"Code"`
@@ -156,17 +181,18 @@ func (t *Tencent) Delete(ctx context.Context, recordId, domain string) error {
 			} `json:"Error"`
 		} `json:"Response"`
 	}
-	if err := json.Unmarshal(resp, &tempResp); err != nil {
+	if err := json.Unmarshal(resp, &respData); err != nil {
 		return err
 	}
 
-	if tempResp.Response.Error.Code != "" {
-		return fmt.Errorf("删除记录失败！err:%v", tempResp.Response.Error.Message)
+	if respData.Response.Error.Code != "" {
+		return fmt.Errorf("删除记录失败！err:%v", respData.Response.Error.Message)
 	}
 
 	return nil
 }
 
+// do 发送请求
 func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error) {
 	if err := t.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("do: 请求被取消或超时: %v", err)
@@ -177,19 +203,19 @@ func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error
 
 	url := "https://" + host
 
-	httpRequest, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(payload))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create request failed: %w", err)
 	}
 
-	httpRequest.Header.Set("Host", host)
-	httpRequest.Header.Set("X-TC-Action", action)
-	httpRequest.Header.Set("X-TC-Version", version)
-	httpRequest.Header.Set("X-TC-Timestamp", strconv.FormatInt(timestamp, 10))
-	httpRequest.Header.Set("Content-Type", contentType)
-	httpRequest.Header.Set("Authorization", authorization)
+	httpReq.Header.Set("Host", host)
+	httpReq.Header.Set("X-TC-Action", action)
+	httpReq.Header.Set("X-TC-Version", version)
+	httpReq.Header.Set("X-TC-Timestamp", strconv.FormatInt(timestamp, 10))
+	httpReq.Header.Set("Content-Type", contentType)
+	httpReq.Header.Set("Authorization", authorization)
 
-	resp, err := t.client.Do(httpRequest)
+	resp, err := provider.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +230,8 @@ func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error
 	return body.Bytes(), nil
 }
 
+// addAndUpdate 添加或更新域名解析记录，处理API返回的错误
+// TTL 最大值86400,最小值1,建议值600
 func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 	if t.secretId == "" || t.secretKey == "" {
 		return fmt.Errorf("Tencent addAndUpdate: secretId 或 secretKey 为空值")
@@ -254,8 +282,8 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return err
 	}
 
-	//  统一解析业务错误与成功数据
-	var tempResp struct {
+	// 统一解析业务错误与成功数据
+	var respData struct {
 		Response struct {
 			RecordId  int64  `json:"RecordId"`
 			RequestId string `json:"RequestId"`
@@ -265,30 +293,32 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 			} `json:"Error"`
 		} `json:"Response"`
 	}
-	if err := json.Unmarshal(resp, &tempResp); err != nil {
+	if err := json.Unmarshal(resp, &respData); err != nil {
 		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(resp))
 	}
 
 	// 拦截腾讯云业务错误
-	if tempResp.Response.Error.Code != "" {
+	if respData.Response.Error.Code != "" {
 		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s (RequestId: %s)",
-			tempResp.Response.Error.Code,
-			tempResp.Response.Error.Message,
-			tempResp.Response.RequestId,
+			respData.Response.Error.Code,
+			respData.Response.Error.Message,
+			respData.Response.RequestId,
 		)
 	}
 
 	// 如果是创建操作，把腾讯云生成的数字 ID 转成 string 填回结构体
-	if r.RecordId == "" && tempResp.Response.RecordId != 0 {
-		r.RecordId = strconv.FormatInt(tempResp.Response.RecordId, 10)
+	if r.RecordId == "" && respData.Response.RecordId != 0 {
+		r.RecordId = strconv.FormatInt(respData.Response.RecordId, 10)
 	}
 
 	return nil
 }
 
-func parseResponse(res []byte, domain string) ([]provider.Record, error) {
+// parseResponse 解析返回值，把记录列表转换成provider.Record
+// 返回值：[]Record: 记录列表，error: 错误信息，没有记录返回ErrRecordNotFound
+func parseResponse(resp []byte, domain string) ([]provider.Record, error) {
 	//  根据腾讯云实际返回的 JSON 结构定义匿名结构体
-	var tempResp struct {
+	var respData struct {
 		Response struct {
 			RecordList []struct {
 				RecordId int64  `json:"RecordId"` // 腾讯云返回的是数字类型
@@ -304,30 +334,30 @@ func parseResponse(res []byte, domain string) ([]provider.Record, error) {
 		} `json:"Response"`
 	}
 
-	if err := json.Unmarshal(res, &tempResp); err != nil {
-		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, string(res))
+	if err := json.Unmarshal(resp, &respData); err != nil {
+		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, string(resp))
 	}
 
 	// 拦截特定错误码，适配通用的 "ErrRecordNotFound" 行为
-	if tempResp.Response.Error.Code != "" {
-		errCode := tempResp.Response.Error.Code
+	if respData.Response.Error.Code != "" {
+		errCode := respData.Response.Error.Code
 		// 腾讯云无解析记录时的常见错误码
 		if errCode == "ResourceNotFound.NoDataOfRecord" || strings.Contains(errCode, "NotFound") {
 			return nil, provider.ErrRecordNotFound
 		}
 		return nil, fmt.Errorf("parseResponse: API返回错误 [%s]: %s",
-			tempResp.Response.Error.Code, tempResp.Response.Error.Message)
+			respData.Response.Error.Code, respData.Response.Error.Message)
 	}
 
 	// 检查是否有记录
-	if len(tempResp.Response.RecordList) == 0 {
+	if len(respData.Response.RecordList) == 0 {
 		return nil, provider.ErrRecordNotFound
 	}
 
 	// 转换为通用的 provider.Record
 	//使用make预分配内存，减少append内存扩容
-	records := make([]provider.Record, 0, len(tempResp.Response.RecordList))
-	for _, r := range tempResp.Response.RecordList {
+	records := make([]provider.Record, 0, len(respData.Response.RecordList))
+	for _, r := range respData.Response.RecordList {
 		records = append(records, provider.Record{
 
 			RecordId:   strconv.FormatInt(r.RecordId, 10),
@@ -339,7 +369,7 @@ func parseResponse(res []byte, domain string) ([]provider.Record, error) {
 		})
 	}
 	if len(records) == 0 {
-		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(res))
+		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(resp))
 	}
 
 	return records, nil

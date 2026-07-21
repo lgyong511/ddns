@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -27,10 +26,10 @@ const (
 	host = "dns.myhuaweicloud.com"
 )
 
+// Huawei 华为云DNS
 type Huawei struct {
 	Key     string
 	Secret  string
-	client  *http.Client
 	limiter *rate.Limiter
 
 	// 缓存 ZoneId 并加锁防并发崩溃
@@ -38,16 +37,24 @@ type Huawei struct {
 	mu     sync.RWMutex
 }
 
+// NewHuawei 新建华为云DNS
+// 参数说明：
+// key和secret：华为云密钥
 func NewHuawei(key, secret string) *Huawei {
 	return &Huawei{
 		Key:     key,
 		Secret:  secret,
-		client:  &http.Client{Timeout: 15 * time.Second},
 		limiter: rate.NewLimiter(5, 10), // 每秒限制5次请求,允许突发10次
 		zoneId:  make(map[string]string),
 	}
 }
 
+// GetAll 获取所有域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// domain: 域名，例如example.com
+// provider.Version: IP地址版本，所有/4/6
+// 返回值：[]provider.Record: 记录列表，error: 错误信息，ErrRecordNotFound:没有记录
 func (h *Huawei) GetAll(ctx context.Context, domain string, v provider.Version) ([]provider.Record, error) {
 	baseUrl := fmt.Sprintf("https://%s/v2.1/recordsets", host)
 
@@ -68,10 +75,20 @@ func (h *Huawei) GetAll(ctx context.Context, domain string, v provider.Version) 
 	return h.parseResponse(resp)
 }
 
+// GetSub 获取域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// subdomain: 子域名，例如www.example.com
+// provider.Version: IP地址版本，4/6
+// 返回值：[]provider.Record: 记录列表，error: 错误信息，ErrRecordNotFound:没有记录
 func (h *Huawei) GetSub(ctx context.Context, subdomain string, v provider.Version) ([]provider.Record, error) {
 	return h.GetAll(ctx, subdomain, v)
 }
 
+// Update 更新域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// Record: 记录信息，必传RecordID、RR、Type、Value
 func (h *Huawei) Update(ctx context.Context, r *provider.Record) error {
 	if r.RecordId == "" {
 		return fmt.Errorf("Huawei Update: RecordID是空值")
@@ -80,6 +97,10 @@ func (h *Huawei) Update(ctx context.Context, r *provider.Record) error {
 	return h.addAndUpdate(ctx, r)
 }
 
+// Create 创建域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// Record: 记录信息，必传DomainName、RR、Type、Value、TTL
 func (h *Huawei) Create(ctx context.Context, r *provider.Record) (*provider.Record, error) {
 	if r.DomainName == "" {
 		return nil, fmt.Errorf("Huawei Create: DomainName是空值")
@@ -92,6 +113,11 @@ func (h *Huawei) Create(ctx context.Context, r *provider.Record) (*provider.Reco
 	return r, nil
 }
 
+// Delete 删除域名解析记录
+// 参数说明：
+// ctx: 上下文，用于控制超时和取消
+// recordId: 记录ID
+// domain: 域名
 func (h *Huawei) Delete(ctx context.Context, recordId, domain string) error {
 	// 动态检查 ZoneID，缺失时自动刷一次
 	zoneId, err := h.getOrFetchZoneId(ctx, domain)
@@ -105,21 +131,23 @@ func (h *Huawei) Delete(ctx context.Context, recordId, domain string) error {
 		return err
 	}
 
-	var errResp struct {
+	var respData struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
 
-	if err := json.Unmarshal(resp, &errResp); err != nil {
+	if err := json.Unmarshal(resp, &respData); err != nil {
 		return err
 	}
-	if errResp.Code != "" {
-		return fmt.Errorf("Delete 操作记录失败！: Code=%s, Message=%s", errResp.Code, errResp.Message)
+	if respData.Code != "" {
+		return fmt.Errorf("Delete 操作记录失败！: Code=%s, Message=%s", respData.Code, respData.Message)
 	}
 
 	return nil
 }
 
+// addAndUpdate 添加或更新域名解析记录，处理API返回的错误
+// TTL 最大值86400,最小值1,建议值600
 func (h *Huawei) addAndUpdate(ctx context.Context, r *provider.Record) error {
 	if h.Key == "" || h.Secret == "" {
 		return fmt.Errorf("addAndUpdate: 凭证不能为空")
@@ -140,10 +168,9 @@ func (h *Huawei) addAndUpdate(ctx context.Context, r *provider.Record) error {
 
 	var name string
 	if r.RR == "@" || r.RR == "" {
-		//好像不加.也是可以的
-		name = r.DomainName + "."
+		name = r.DomainName
 	} else {
-		name = fmt.Sprintf("%s.%s.", r.RR, r.DomainName)
+		name = fmt.Sprintf("%s.%s", r.RR, r.DomainName)
 	}
 
 	payload := struct {
@@ -175,42 +202,43 @@ func (h *Huawei) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return err
 	}
 
-	var errResp struct {
+	var respData struct {
 		ID      string `json:"id"`
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
 
-	if err := json.Unmarshal(resp, &errResp); err != nil {
+	if err := json.Unmarshal(resp, &respData); err != nil {
 		return err
 	}
-	if errResp.Code != "" {
-		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", errResp.Code, errResp.Message)
+	if respData.Code != "" {
+		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", respData.Code, respData.Message)
 	}
 
-	if r.RecordId == "" && errResp.ID != "" {
-		r.RecordId = errResp.ID
+	if r.RecordId == "" && respData.ID != "" {
+		r.RecordId = respData.ID
 	}
 
 	return nil
 }
 
+// do 发送请求
 func (h *Huawei) do(ctx context.Context, action, urlStr string, body string) ([]byte, error) {
 	if err := h.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("do: 请求被取消或超时: %v", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, action, urlStr, strings.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, action, urlStr, strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Add("content-type", "application/json; charset=utf-8")
-	req.Header.Add("x-stage", "RELEASE")
+	httpReq.Header.Add("content-type", "application/json; charset=utf-8")
+	httpReq.Header.Add("x-stage", "RELEASE")
 
-	if err := h.sign(req); err != nil {
+	if err := h.sign(httpReq); err != nil {
 		return nil, err
 	}
 
-	resp, err := h.client.Do(req)
+	resp, err := provider.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -224,8 +252,10 @@ func (h *Huawei) do(ctx context.Context, action, urlStr string, body string) ([]
 	return respBytes, nil
 }
 
+// parseResponse 解析返回值，把记录列表转换成provider.Record
+// 返回值：[]Record: 记录列表，error: 错误信息，没有记录返回ErrRecordNotFound
 func (h *Huawei) parseResponse(resp []byte) ([]provider.Record, error) {
-	var data struct {
+	var respData struct {
 		Records []struct {
 			RecordId  string   `json:"id"`
 			SubDomain string   `json:"name"`
@@ -238,16 +268,16 @@ func (h *Huawei) parseResponse(resp []byte) ([]provider.Record, error) {
 		} `json:"metadata"`
 	}
 
-	if err := json.Unmarshal(resp, &data); err != nil {
+	if err := json.Unmarshal(resp, &respData); err != nil {
 		return nil, fmt.Errorf("解析API返回失败，err：%v", err)
 	}
 
-	if data.Metadata.TotalCount == 0 {
+	if respData.Metadata.TotalCount == 0 {
 		return nil, provider.ErrRecordNotFound
 	}
 
-	records := make([]provider.Record, 0, len(data.Records))
-	for _, Record := range data.Records {
+	records := make([]provider.Record, 0, len(respData.Records))
+	for _, Record := range respData.Records {
 		subDomain := strings.TrimSuffix(Record.SubDomain, ".")
 		rr, domainName, err := utils.ParseDomain(subDomain)
 		if err != nil {
@@ -312,20 +342,20 @@ func (h *Huawei) getZoneId(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var data struct {
+	var respData struct {
 		Zones []struct {
 			ZoneID   string `json:"id"`
 			ZoneName string `json:"name"`
 		} `json:"zones"`
 	}
 
-	if err := json.Unmarshal(resp, &data); err != nil {
+	if err := json.Unmarshal(resp, &respData); err != nil {
 		return err
 	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, zone := range data.Zones {
+	for _, zone := range respData.Zones {
 		name := strings.TrimSuffix(zone.ZoneName, ".")
 		h.zoneId[name] = zone.ZoneID
 	}

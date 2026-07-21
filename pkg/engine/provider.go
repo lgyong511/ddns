@@ -123,7 +123,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheS
 			//计算还有多久强制同步
 			timeUntilForceSync := time.Until(cache.LastSyncAt.Add(forceInterval * time.Minute))
 
-			logger.Info("跳过同步", "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync, "subDomain", subDomain, "currentAddr", currentAddr)
+			logger.Info("跳过同步", "subDomain", subDomain, "currentAddr", currentAddr, "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync)
 			continue
 		}
 
