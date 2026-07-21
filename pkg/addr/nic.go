@@ -18,7 +18,7 @@ func GetAllNic() (map[string][]netip.Addr, error) {
 
 	result := make(map[string][]netip.Addr)
 	for _, iface := range interfaces {
-		// 1. 跳过非活动接口
+		// 跳过非活动接口
 		if iface.Flags&net.FlagUp == 0 {
 			continue
 		}

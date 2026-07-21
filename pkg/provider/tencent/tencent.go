@@ -15,45 +15,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-/*创建成功
-{
-  "Response": {
-    "RecordId": 2341017785,
-    "RequestId": "e36c96cd-adc7-40c3-8079-13eba9f0f035"
-  }
-}
-  创建失败
-  {
-  "Response": {
-    "Error": {
-      "Code": "InvalidParameterValue.DomainNotExists",
-      "Message": "当前域名未添加解析，请返回域名列表。"
-    },
-    "RequestId": "fbf9160a-de0a-48e2-ac17-a3ed290f5d9e"
-  }
-}
-  创建记录存在
-  {
-  "Response": {
-    "Error": {
-      "Code": "InvalidParameter.DomainRecordExist",
-      "Message": "记录已经存在，无需再次添加。"
-    },
-    "RequestId": "1a084ee6-059d-4a7a-a6f1-ac7e97648afc"
-  }
-}
-  修改成功
-  {
-  "Response": {
-    "RecordId": 2341019087,
-    "RequestId": "88c5bed0-784e-4555-8650-0eac55762621"
-  }
-}
-  删除除了ID还有传域名
-
-  查询如果没有记录是返回错误，而不是返回空切片
-*/
-
 const (
 	// dns服务器地址
 	host = "dnspod.tencentcloudapi.com"
@@ -80,7 +41,7 @@ func NewTencent(accessKeyId, accessKeySecret string) *Tencent {
 		secretId:  accessKeyId,
 		secretKey: accessKeySecret,
 		client:    &http.Client{Timeout: 15 * time.Second},
-		limiter:   rate.NewLimiter(5, 10), // 每秒限制1次请求
+		limiter:   rate.NewLimiter(5, 10), // 每秒限制5次请求
 	}
 }
 
@@ -214,7 +175,6 @@ func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error
 
 	authorization := t.sign(action, payload, timestamp)
 
-	// ************* 步骤 5：构造并发起请求 *************
 	url := "https://" + host
 
 	httpRequest, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(payload))
@@ -249,7 +209,7 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return fmt.Errorf("Tencent addAndUpdate: secretId 或 secretKey 为空值")
 	}
 
-	// 1. 参数校验与兜底
+	// 参数校验与兜底
 	if r.TTL > 86400 || r.TTL < 1 {
 		r.TTL = 600
 	}
@@ -257,7 +217,7 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return fmt.Errorf("addAndUpdate: 参数不完整！%+v", r)
 	}
 
-	// 2. 使用 map 动态构建通用 Payload，完美解决结构体类型固定的问题
+	//  使用 map 动态构建通用 Payload，完美解决结构体类型固定的问题
 	payload := map[string]any{
 		"Domain":     r.DomainName,
 		"RecordType": r.Type,
@@ -282,22 +242,22 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		payload["RecordId"] = id
 	}
 
-	// 3. 序列化 Payload
+	//  序列化 Payload
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("json序列化请求体失败，err：%v", err)
 	}
 
-	// 4. 发起请求
+	// 发起请求
 	resp, err := t.do(ctx, action, string(jsonPayload))
 	if err != nil {
 		return err
 	}
 
-	// 5. 统一解析业务错误与成功数据
+	//  统一解析业务错误与成功数据
 	var tempResp struct {
 		Response struct {
-			RecordId  int64  `json:"RecordId"` // 创建或修改成功时腾讯云会返回新/旧 ID
+			RecordId  int64  `json:"RecordId"`
 			RequestId string `json:"RequestId"`
 			Error     struct {
 				Code    string `json:"Code"`
@@ -309,7 +269,7 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(resp))
 	}
 
-	// 6. 拦截腾讯云业务错误
+	// 拦截腾讯云业务错误
 	if tempResp.Response.Error.Code != "" {
 		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s (RequestId: %s)",
 			tempResp.Response.Error.Code,
@@ -318,7 +278,7 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		)
 	}
 
-	// 7. 【回填 ID 机制】：如果是创建操作，把腾讯云生成的数字 ID 转成 string 填回结构体
+	// 如果是创建操作，把腾讯云生成的数字 ID 转成 string 填回结构体
 	if r.RecordId == "" && tempResp.Response.RecordId != 0 {
 		r.RecordId = strconv.FormatInt(tempResp.Response.RecordId, 10)
 	}

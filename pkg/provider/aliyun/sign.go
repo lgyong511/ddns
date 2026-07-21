@@ -21,7 +21,7 @@ func (a *Aliyun) sign(req *request) error {
 	newQueryParams := make(map[string]interface{})
 	processObject(newQueryParams, "", req.queryParam)
 	req.queryParam = newQueryParams
-	// 步骤 1：拼接规范请求串
+	// 拼接规范请求串
 	canonicalQueryString := ""
 	keys := maps.Keys(req.queryParam)
 	sort.Strings(keys)
@@ -55,18 +55,18 @@ func (a *Aliyun) sign(req *request) error {
 
 	canonicalRequest := req.method + "\n" + req.canonicalUri + "\n" + canonicalQueryString + "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + hashedRequestPayload
 
-	// 步骤 2：拼接待签名字符串
+	// 拼接待签名字符串
 	hashedCanonicalRequest := sha256Hex([]byte(canonicalRequest))
 	stringToSign := algorithm + "\n" + hashedCanonicalRequest
 
-	// 步骤 3：计算签名
+	// 计算签名
 	byteData, err := hmac256([]byte(a.AccessKeySecret), stringToSign)
 	if err != nil {
 		return err
 	}
 	signature := strings.ToLower(hex.EncodeToString(byteData))
 
-	// 步骤 4：拼接Authorization
+	// 拼接Authorization
 	authorization := algorithm + " Credential=" + a.AccessKeyId + ",SignedHeaders=" + signedHeaders + ",Signature=" + signature
 	req.headers["Authorization"] = authorization
 	return nil
@@ -132,9 +132,6 @@ func processObject(mapResult map[string]interface{}, key string, value interface
 			processObject(mapResult, fmt.Sprintf("%s.%s", key, subKey), subValue)
 		}
 	default:
-		// if strings.HasPrefix(key, ".") {
-		// 	key = key[1:]
-		// }
 		key = strings.TrimPrefix(key, ".")
 		if b, ok := v.([]byte); ok {
 			mapResult[key] = string(b)

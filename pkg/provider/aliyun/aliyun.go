@@ -143,12 +143,10 @@ func (a *Aliyun) Create(ctx context.Context, r *provider.Record) (*provider.Reco
 		return nil, fmt.Errorf("Aliyun Create: DomainName是空值")
 	}
 
-	// 一行调用，错误由底层抛出，ID 由底层内部通过指针自动回填
 	if err := a.addAndUpdate(ctx, r); err != nil {
 		return nil, err
 	}
 
-	// 执行到这里时，r.RecordId 已经有值了，直接返回给上层业务
 	return r, nil
 }
 
@@ -189,7 +187,7 @@ func (a *Aliyun) Delete(ctx context.Context, recordId, domain string) error {
 // TTL 最大值86400,最小值1,建议值600
 // 优化后：去掉 []byte 返回值，只保留 error
 func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
-	// 1. 验证参数是否合法
+	//  验证参数是否合法
 	if a.AccessKeyId == "" || a.AccessKeySecret == "" {
 		return fmt.Errorf("addAndUpdate: 凭证不能为空")
 	}
@@ -220,7 +218,7 @@ func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
 	str := formDataToString(body)
 	req.body = []byte(*str)
 
-	// 2. 签名与请求
+	// 签名与请求
 	if err := a.sign(req); err != nil {
 		return fmt.Errorf("addAndUpdate: 签名失败！: %v", err)
 	}
@@ -229,23 +227,23 @@ func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return fmt.Errorf("addAndUpdate: 请求API失败！: %v", err)
 	}
 
-	// 3. 定义一个复合匿名结构体，把“业务错误”和“成功返回的 RecordId”一网打尽
+	// 定义一个复合匿名结构体
 	var tempResp struct {
-		Code      string `json:"Code"`     // 错误码
-		Message   string `json:"Message"`  // 错误信息
-		RecordId  string `json:"RecordId"` // 阿里云创建成功时返回的 ID (注意：阿里云返回的是字符串)
+		Code      string `json:"Code"`
+		Message   string `json:"Message"`
+		RecordId  string `json:"RecordId"`
 		RequestId string `json:"RequestId"`
 	}
 	if err := json.Unmarshal(res, &tempResp); err != nil {
 		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(res))
 	}
 
-	// 4. 优先拦截并返回业务错误
+	// 优先拦截并返回业务错误
 	if tempResp.Code != "" {
 		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", tempResp.Code, tempResp.Message)
 	}
 
-	// 5. 如果是新增记录，直接把阿里云下发的 RecordId 回填给指针对象
+	// 如果是新增记录，直接把阿里云下发的 RecordId 回填给指针对象
 	if r.RecordId == "" && tempResp.RecordId != "" {
 		r.RecordId = tempResp.RecordId
 	}

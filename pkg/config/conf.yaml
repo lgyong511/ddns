@@ -1,0 +1,25 @@
+providers:
+  - name: YOUR_PROVIDER_NAME
+    provider: aliyun
+    keyId: YOUR_ACCESS_KEY_ID
+    keySecret: YOUR_ACCESS_KEY_SECRET
+    forceInterval: 5
+    records:
+      - name: YOUR_RECORD_NAME1
+        subDomains:
+          - your.ex.xx
+        ipVersion: 6
+        ttl: 600
+        getType: cmd
+        getValue: ifconfig | awk '/240:?/' | awk '{print $2}'
+        interval: 20
+        rule: ""
+      - name: YOUR_RECORD_NAME2
+        subDomains:
+          - your.ex.xx
+        ipVersion: 4
+        ttl: 600
+        getType: url
+        getValue: https://myip.ipip.net, https://ddns.oray.com/checkip, https://ip.3322.net, https://4.ipw.cn, https://v4.yinghualuo.cn/bejson
+        interval: 10
+        rule: ""

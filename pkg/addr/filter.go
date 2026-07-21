@@ -82,13 +82,13 @@ func FilterAddrs(addrs []netip.Addr, filters ...Filter) []netip.Addr {
 // SpliceIPv6 取 IPv6 地址的前 64 位前缀，拼接指定的后缀。
 // suffix 可以是 8 字节的数组、切片，或者标准的 IPv6 后缀字符串（如 "::1"、“::9209:d0ff:fe09:781d“ 或 "0:0:0:1"）
 func SpliceIPv6(addr netip.Addr, suffix string) (netip.Addr, error) {
-	// 1. 统一解包并确保是 IPv6
+	// 统一解包并确保是 IPv6
 	addr = addr.Unmap()
 	if !addr.Is6() {
 		return netip.Addr{}, fmt.Errorf("SpliceIPv6: IP地址不是IPv6")
 	}
 
-	// 2. 解析后缀地址（例如将 "::1"、“::9209:d0ff:fe09:781d“ 解析为标准的 netip.Addr）
+	// 解析后缀地址（例如将 "::1"、“::9209:d0ff:fe09:781d“ 解析为标准的 netip.Addr）
 	suffixAddr, err := netip.ParseAddr(suffix)
 	if err != nil {
 		// 移除开头可能存在的任意多个冒号（兼容 ":" 或 "::"）
@@ -102,15 +102,15 @@ func SpliceIPv6(addr netip.Addr, suffix string) (netip.Addr, error) {
 		}
 	}
 
-	// 3. 提取两者的字节数组
+	//  提取两者的字节数组
 	ipBytes := addr.As16()           // 原始 IP 的 16 字节
 	suffixBytes := suffixAddr.As16() // 后缀 IP 的 16 字节
 
-	// 4. 组合：前 8 字节用原始前缀，后 8 字节用后缀的后 8 字节
+	// 组合：前 8 字节用原始前缀，后 8 字节用后缀的后 8 字节
 	var finalBytes [16]byte
 	copy(finalBytes[0:8], ipBytes[0:8])       // 复制前 64 位前缀
 	copy(finalBytes[8:16], suffixBytes[8:16]) // 复制后 64 位后缀
 
-	// 5. 重新生成 Addr 对象（带上原始的 Zone，如果有的话）
+	// 重新生成 Addr 对象（带上原始的 Zone，如果有的话）
 	return netip.AddrFrom16(finalBytes).WithZone(addr.Zone()), nil
 }
