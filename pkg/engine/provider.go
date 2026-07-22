@@ -14,14 +14,6 @@ import (
 	"time"
 )
 
-// SubDomainInfo 子域名同步缓存，以子域名为最新缓存对象。
-type SubDomainInfo struct {
-	//IP地址缓存，即上传同步的
-	Addr netip.Addr
-	//上次同步的时间
-	LastSyncAt time.Time
-}
-
 // Provider 代表一个DNS服务商实例，包含服务商配置和操作接口
 type Provider struct {
 	// 服务商配置
@@ -66,11 +58,13 @@ func (p *Provider) Start(ctx context.Context) {
 
 // watchRecord 监听单个记录的IP地址变化，并同步到DNS服务商
 func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
+	recordState, err := NewRecordState(record)
+	if err != nil {
+		slog.Error("初始化 RecordState 失败", "err", err)
+		return
+	}
 
-	//子域名缓存，key是子域名
-	cacheSubDomain := make(map[string]SubDomainInfo)
-
-	p.syncRecord(ctx, record, cacheSubDomain)
+	p.syncRecord(ctx, record, recordState)
 
 	//设置定时器
 	//允许范围是5-60秒
@@ -88,18 +82,17 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 			slog.Info("record 监听已停止", "record", record.Name)
 			return
 		case <-ticker.C:
-			p.syncRecord(ctx, record, cacheSubDomain)
+			p.syncRecord(ctx, record, recordState)
 		}
 	}
 }
 
 // syncRecord 同步单个记录的IP地址变化到DNS服务商
-func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheSubDomain map[string]SubDomainInfo) {
-	// logger := slog.With(slog.String("provider", p.provider.Name), slog.String("record", record.Name))
+func (p *Provider) syncRecord(ctx context.Context, record *config.Record, recordState *RecordState) {
 	logger := p.logger(record.Name)
 
 	// 获取当前IP地址
-	currentAddr, err := p.fetchCurrentAddr(ctx, record)
+	currentAddr, err := recordState.Resolve(ctx)
 	if err != nil {
 		logger.Error("获取 IP 失败", "err", err)
 		return
@@ -114,16 +107,10 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheS
 
 	// 遍历所有子域名
 	for _, subDomain := range record.SubDomains {
-		//读取缓存
-		cache, exists := cacheSubDomain[subDomain]
-		//判断是否需要同步
-		needUpdate := !exists || cache.Addr != currentAddr || time.Since(cache.LastSyncAt) >= forceInterval*time.Minute
-		// 不需要同步，退出当前循环
-		if !needUpdate {
-			//计算还有多久强制同步
-			timeUntilForceSync := time.Until(cache.LastSyncAt.Add(forceInterval * time.Minute))
-
-			logger.Info("跳过同步", "subDomain", subDomain, "currentAddr", currentAddr, "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync)
+		//判断是否需要更新和计算剩余强制和DNS服务商对齐时间
+		needSync, timeUntilForceSync := recordState.ShouldSync(subDomain, currentAddr, forceInterval)
+		if !needSync {
+			logger.Info("跳过同步", "subDomain", subDomain, "currentAddr", currentAddr, "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync.Truncate(time.Second))
 			continue
 		}
 
@@ -132,35 +119,10 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, cacheS
 			logger.Error("同步失败", "subDomain", subDomain, "err", err)
 			continue // 当前子域名失败，不更新缓存，下一轮重试
 		}
-		//成功，记录子域名缓存
-		cacheSubDomain[subDomain] = SubDomainInfo{Addr: currentAddr, LastSyncAt: time.Now()}
-	}
-}
 
-// fetchCurrentAddr 获取经过版本过滤、规则筛选后的当前IP地址
-func (p *Provider) fetchCurrentAddr(ctx context.Context, record *config.Record) (netip.Addr, error) {
-	//获取IP地址
-	fetcher, err := addr.NewFetcher(record.GetType, record.GetValue)
-	if err != nil {
-		return netip.Addr{}, err
+		// 同步成功，封装好的缓存更新
+		recordState.UpdateCache(subDomain, currentAddr)
 	}
-	addrs, err := fetcher.Fetch(ctx)
-	if err != nil {
-		return netip.Addr{}, err
-	}
-	//构建版本过滤
-	versionFilter := addr.NewFilter(record.IPVersion)
-	if versionFilter == nil {
-		return netip.Addr{}, fmt.Errorf("无效的 IP 版本: %v", record.IPVersion)
-	}
-	//执行过滤
-	addrs = addr.FilterAddrs(addrs, versionFilter, addr.IsPublic)
-	// 构建策略并执行过滤
-	addr := addr.NewSelector(record.Rule).Select(addrs)
-	if !addr.IsValid() {
-		return netip.Addr{}, fmt.Errorf("无效的IP地址：%v", addr)
-	}
-	return addr, nil
 }
 
 // syncToProvider 同步子域名记录到DNS服务商
@@ -219,4 +181,81 @@ func (p *Provider) logger(record string) *slog.Logger {
 		"provider", p.provider.Name,
 		"record", record,
 	)
+}
+
+// SubDomainInfo 子域名同步缓存，以子域名为最新缓存对象。
+type SubDomainInfo struct {
+	//IP地址缓存，即上传同步的
+	Addr netip.Addr
+	//上次同步的时间
+	LastSyncAt time.Time
+}
+
+// RecordState 管理单个 Record 的 IP 解析器与同步缓存状态
+type RecordState struct {
+	fetcher        addr.Fetcher
+	filter         addr.Filter
+	selector       addr.Selector
+	cacheSubDomain map[string]SubDomainInfo
+}
+
+func NewRecordState(config *config.Record) (*RecordState, error) {
+	fetcher, err := addr.NewFetcher(config.GetType, config.GetValue)
+	if err != nil {
+		return nil, err
+	}
+	filter, err := addr.NewFilter(config.IPVersion)
+	if err != nil {
+		return nil, err
+	}
+	selector := addr.NewSelector(config.Rule)
+
+	return &RecordState{
+		fetcher:  fetcher,
+		filter:   filter,
+		selector: selector,
+		//子域名缓存，key是子域名
+		cacheSubDomain: make(map[string]SubDomainInfo),
+	}, nil
+
+}
+
+// Resolve 执行 IP 获取和过滤
+func (r *RecordState) Resolve(ctx context.Context) (netip.Addr, error) {
+	addrs, err := r.fetcher.Fetch(ctx)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	addrs = addr.FilterAddrs(addrs, r.filter, addr.IsPublic)
+
+	addr := r.selector.Select(addrs)
+	if !addr.IsValid() {
+		return netip.Addr{}, fmt.Errorf("未筛选出有效的公网 IP")
+	}
+
+	return addr, nil
+}
+
+// ShouldSync 判断子域名是否需要同步，并返回距离下次强制同步的剩余时间
+func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr, forceIntervalMinutes time.Duration) (bool, time.Duration) {
+	cache, exists := r.cacheSubDomain[subDomain]
+	if !exists || cache.Addr != currentAddr {
+		return true, 0
+	}
+
+	forceInterval := forceIntervalMinutes * time.Minute
+	elapsed := time.Since(cache.LastSyncAt)
+	if elapsed >= forceInterval {
+		return true, 0
+	}
+
+	return false, forceInterval - elapsed
+}
+
+// UpdateCache 更新成功后的同步缓存
+func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr) {
+	r.cacheSubDomain[subDomain] = SubDomainInfo{
+		Addr:       currentAddr,
+		LastSyncAt: time.Now(),
+	}
 }
