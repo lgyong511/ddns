@@ -1,6 +1,6 @@
 # DDNS
 
-DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具。它会定时获取当前公网 IP，并自动更新 DNS 服务商中的解析记录，适合家庭网络、NAS、软路由、云服务器等场景。
+DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具。它会定时获取当前公网 IP，并自动更新 DNS 服务商中的解析记录，支持多少方式获取IP地址。适合家庭网络、NAS、软路由等场景。
 
 ## 功能特点
 
@@ -30,10 +30,56 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 
 ## 快速开始
 
-### 1. 下载并编译
+### 1. GitHub 下载使用
+
+从 [GitHub Releases](https://github.com/lgyong511/ddns/releases) 下载对应系统和架构的已编译版本，解压后进入程序目录，并准备配置文件：
 
 ```bash
-https://github.com/lgyong511/ddns.git
+./ddns -c conf.yaml
+```
+
+如果配置文件名为 `conf.yaml` 且位于程序同目录，也可以直接运行：
+
+```bash
+./ddns
+```
+
+### 2. Docker 运行
+
+项目当前提供两种镜像构建目标：
+
+- `generic`：轻量通用版，基于 Alpine，适合普通场景，多架构镜像
+- `openwrt`：面向软路由 OpenWrt 场景的镜像，适合挂载 `ubus` socket，只有amd64（x86-64）
+
+#### 运行通用版
+
+**说明：若不使用网卡获取IP地址，请去除 `--net=host`**
+
+```bash
+docker run -d --name ddns --restart always \
+  --net=host \
+  -v /app/:/app/config/ \
+  ghcr.io/lgyong511/ddns:latest
+```
+
+#### 运行 OpenWrt 版
+
+**说明：如果要使用 DUID 获取 IPv6 地址需要挂载 ubus，不需要时可不挂载**
+
+```bash
+docker run -d --name ddns --restart always \
+  --net=host \
+  -v /app/:/app/config/ \
+  -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
+  ghcr.io/lgyong511/ddns:latest-openwrt
+```
+
+### 3. 源码编译
+
+如果需要自行编译，可以从 GitHub 克隆源码：
+
+```bash
+git clone https://github.com/lgyong511/ddns.git
 cd ddns
 go build -o ddns ./cmd/ddns
 ```
@@ -44,7 +90,7 @@ go build -o ddns ./cmd/ddns
 make build
 ```
 
-### 2. 准备配置文件
+### 4. 准备配置文件
 
 在项目根目录创建或修改 `conf.yaml`，示例：
 
@@ -159,7 +205,7 @@ providers:
         interval: 30
         rule: ""
 ```
-### 3. 启动程序
+### 5. 启动程序
 
 ```bash
 ./ddns
@@ -171,38 +217,10 @@ providers:
 ./ddns -c /path/to/conf.yaml
 ```
 
-### 4. 使用 Makefile 运行
+### 6. 使用 Makefile 运行
 
 ```bash
 make run
-```
-
-## Docker 运行
-
-项目当前提供两种镜像构建目标：
-
-- `generic`：轻量通用版，基于 Alpine，适合普通场景，多架构镜像
-- `openwrt`：面向软路由 OpenWrt 场景的镜像，适合挂载 `ubus` socket，只有amd64（x86-64）
-
-### 1. 运行容器
-
-通用版：
-:red_circle: **说明：若不使用网卡获取IP地址，请去除 --net=host**
-```bash
-docker run -d --name ddns --restart always \
-  --net=host \
-  -v /app/:/app/config/ \
-  ghcr.io/lgyong511/ddns:latest
-```
-
-OpenWrt 版 ：
-:red_circle: **说明：如果要使用DUID获取IPv6地址需要挂载ubus，若不需要可不挂载**
-```bash
-docker run -d --name ddns --restart always \
-  --net=host \
-  -v /app/:/app/config/ \
-  -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
-  ghcr.io/lgyong511/ddns:latest-openwrt
 ```
 
 ## 配置说明
@@ -211,8 +229,8 @@ docker run -d --name ddns --restart always \
 
 - `name`：当前 Provider 的名称
 - `provider`：DNS 服务商类型， `aliyun`、`tencent`、`huawei`
-- `keyId`：AccessKey ID
-- `keySecret`：AccessKey Secret
+- `keyId`：API访问KEY
+- `keySecret`：API访问Secret
 - `forceInterval`：强制同步的时间间隔，单位分钟
 - `records`：要同步的解析记录列表
 
@@ -226,6 +244,49 @@ docker run -d --name ddns --restart always \
 - `getValue`：对应获取方式的参数
 - `interval`：检测周期，单位秒
 - `rule`：IP 过滤规则
+
+### webhook
+
+`webhook` 用于在 DNS 记录创建、更新或同步失败时发送通知。未配置 `url` 时不会发送通知。
+
+- `url`：Webhook 请求地址，必填
+- `body`：POST 请求体。为空时使用 GET 请求，并将模板变量进行 URL 编码；不为空时使用 POST 请求，模板变量直接替换
+- `headers`：请求头列表，每项使用 `Header-Name: Header-Value` 格式
+
+支持以下模板变量：
+
+- `{{Domain}}`：发生变化的域名
+- `{{OldAddr}}`：旧 IP 地址；创建记录时通常为空
+- `{{NewAddr}}`：新 IP 地址
+- `{{Provider}}`：DNS 服务商名称
+- `{{State}}`：操作状态，可能为 `创建记录成功`、`更新记录成功` 或以 `同步失败:` 开头的错误信息
+- `{{Date}}`：通知时间，格式为 `YYYY-MM-DD HH:mm:ss`
+
+#### GET 请求示例
+
+当 `body` 为空时，程序会将模板变量替换到 URL 中并发送 GET 请求：
+**Server酱示例：**
+```yaml
+webhook:
+  url: "https://sctapi.ftqq.com/[YOU_SENDKEY].send?title=公网IP变了&desp=域名：{{Domain}}，旧地址：{{OldAddr}} ，新地址：{{NewAddr}} ，服务商：{{Provider}} ，状态：{{State}}"
+  body: ""
+  headers:
+    - ""
+```
+
+#### POST 请求示例
+
+填写 `body` 后会发送 POST 请求，适合接收 JSON 格式通知：
+**企业微信示例：**
+```yaml
+webhook:
+  url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=[YOU_KEY]
+  body: '{"msgtype":"text","text":{"content":"【DDNS】域名 {{Domain}} 解析记录 {{State}}！\n- 服务商：{{Provider}}\n- 旧地址：{{OldAddr}}\n- 新地址：{{NewAddr}}\n- 时间：{{Date}}"}}'
+  headers:
+    - "Content-Type: application/json"
+```
+
+Webhook 发送失败只记录日志，不会阻塞 DNS 轮询。
 
 ## 示例：不同获取方式
 
@@ -303,4 +364,4 @@ records:
 
 - 配置文件修改后会自动触发热加载
 - 若未显式指定配置文件，程序会优先使用可执行文件同目录下的 `conf.yaml`
-- 请妥善保管 `keyId` 与 `keySecret`
+- 请妥善保管 `key` 与 `Secret`

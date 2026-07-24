@@ -23,3 +23,8 @@ providers:
         getValue: https://myip.ipip.net, https://ddns.oray.com/checkip, https://ip.3322.net, https://4.ipw.cn, https://v4.yinghualuo.cn/bejson
         interval: 10
         rule: ""
+webhook:
+  url: https://sctapi.ftqq.com/SCT383663Trkm6sv3cyjHSnljCX1La7815.send?title=公网IP变了&desp=域名：{{Domain}}，旧地址：{{OldAddr}} ，新地址：{{NewAddr}} ，服务商：{{Provider}} ，状态：{{State}}
+  body: ""
+  headers:
+    - ""

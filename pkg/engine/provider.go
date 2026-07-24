@@ -6,6 +6,7 @@ import (
 	"ddns/pkg/config"
 	"ddns/pkg/provider"
 	"ddns/pkg/utils"
+	"ddns/pkg/webhook"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,10 +21,12 @@ type Provider struct {
 	provider *config.Provider
 	//服务商CRUD接口
 	operator Operator
+	// Webhook 通知器
+	notifier *webhook.Webhook
 }
 
 // NewProvider 创建一个新的 Provider 实例
-func NewProvider(provider *config.Provider) (*Provider, error) {
+func NewProvider(provider *config.Provider, notifier *webhook.Webhook) (*Provider, error) {
 	operator, err := NewOperator(provider.Provider, provider.KeyID, provider.KeySecret)
 	if err != nil {
 		return nil, err
@@ -32,6 +35,7 @@ func NewProvider(provider *config.Provider) (*Provider, error) {
 	return &Provider{
 		provider: provider,
 		operator: operator,
+		notifier: notifier,
 	}, nil
 }
 
@@ -113,10 +117,23 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 			logger.Info("跳过同步", "subDomain", subDomain, "currentAddr", currentAddr, "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync.Truncate(time.Second))
 			continue
 		}
+		oldAddr := netip.Addr{}
+		if cache, ok := recordState.cacheSubDomain[subDomain]; ok {
+			oldAddr = cache.Addr
+		}
 
 		// 执行DNS服务商操作
-		if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
+		if err := p.syncToProvider(ctx, subDomain, record, currentAddr, oldAddr); err != nil {
 			logger.Error("同步失败", "subDomain", subDomain, "err", err)
+			//同步失败发送 webhook 通知
+			p.sendNotification(&webhook.WebhookData{
+				Domain:   subDomain,
+				OldAddr:  oldAddr.String(),
+				NewAddr:  currentAddr.String(),
+				Provider: p.provider.Provider,
+				State:    fmt.Sprintf("同步失败: %v", err),
+				Date:     time.Now().Format("2006-01-02 15:04:05"),
+			})
 			continue // 当前子域名失败，不更新缓存，下一轮重试
 		}
 
@@ -126,7 +143,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 }
 
 // syncToProvider 同步子域名记录到DNS服务商
-func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr) error {
+func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr, oldAddr netip.Addr) error {
 	logger := p.logger(record.Name)
 	//调用DNS运营商
 	resRecords, err := p.operator.GetSub(ctx, subDomain, record.IPVersion)
@@ -149,6 +166,15 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		if err == nil {
 
 			logger.Info("DNS记录已创建", "subDomain", subDomain, "currentAddr", currentAddr)
+			// 创建新记录成功发送 webhook 通知
+			p.sendNotification(&webhook.WebhookData{
+				Domain:   subDomain,
+				OldAddr:  oldAddr.String(),
+				NewAddr:  currentAddr.String(),
+				Provider: p.provider.Provider,
+				State:    "创建记录成功",
+				Date:     time.Now().Format("2006-01-02 15:04:05"),
+			})
 		}
 		return err
 	}
@@ -171,8 +197,32 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 			return fmt.Errorf("更新记录失败: %w", err)
 		}
 		logger.Info("DNS记录已更新", "subDomain", subDomain, "oldAddr", resRecord.Value, "newAddr", currentAddr)
+
+		//更新 IP 成功发送 webhook 通知
+		p.sendNotification(&webhook.WebhookData{
+			Domain:   subDomain,
+			OldAddr:  resRecord.Value,
+			NewAddr:  currentAddr.String(),
+			Provider: p.provider.Provider,
+			State:    "更新记录成功",
+			Date:     time.Now().Format("2006-01-02 15:04:05"),
+		})
 	}
 	return nil
+}
+
+// sendNotification 封装安全的异步 Webhook 通知发送
+func (p *Provider) sendNotification(data *webhook.WebhookData) {
+	if p.notifier == nil {
+		return
+	}
+
+	// 开启协程异步发送，防止 Webhook 的网络延迟阻塞 DDNS 轮询
+	go func() {
+		if err := p.notifier.Send(data); err != nil {
+			slog.Error("发送 Webhook 通知失败", "subDomain", data.Domain, "err", err)
+		}
+	}()
 }
 
 // logger 返回一个带有 provider 和 record 字段的 slog.Logger 实例，用于记录日志

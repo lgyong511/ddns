@@ -7,6 +7,7 @@ import (
 	"ddns/pkg/provider/aliyun"
 	"ddns/pkg/provider/huawei"
 	"ddns/pkg/provider/tencent"
+	"ddns/pkg/webhook"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -79,9 +80,15 @@ func (e *Engine) Start(ctx context.Context) {
 			}
 		}
 
+		//初始化 Webhook 实例
+		var notifier *webhook.Webhook
+		if cfg.Webhook.URL != "" {
+			notifier = webhook.NewWebhook(&cfg.Webhook)
+		}
+
 		//依次启动Provider
 		for _, provider := range cfg.Providers {
-			p, err := NewProvider(&provider)
+			p, err := NewProvider(&provider, notifier)
 			if err != nil {
 				slog.Error("初始化服务商失败，跳过该服务商", "provider", provider.Name, "err", err)
 				continue

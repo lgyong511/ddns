@@ -10,6 +10,13 @@ import (
 // Config 代表整个 YAML 文件的根结构
 type Config struct {
 	Providers []Provider `yaml:"providers" mapstructure:"providers"`
+	Webhook   Webhook    `yaml:"webhook" mapstructure:"webhook"`
+}
+
+type Webhook struct {
+	URL     string   `yaml:"url" mapstructure:"url"`
+	Body    string   `yaml:"body" mapstructure:"body"`
+	Headers []string `yaml:"headers" mapstructure:"headers"`
 }
 
 // Provider 代表阿里等服务商配置
@@ -101,8 +108,8 @@ func (c *Config) Validate() error {
 			}
 			recordNames[r.Name] = true
 		}
-
 	}
+
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
