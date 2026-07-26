@@ -1,2 +1,4 @@
+.gitignore
 conf_MAC.yaml
 conf_OpenWrt.yaml
+docker-compose.yml

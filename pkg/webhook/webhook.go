@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"ddns/pkg/config"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -52,14 +53,22 @@ func (w *Webhook) Send(data *WebhookData) error {
 			return fmt.Errorf("创建 GET 请求失败: %w", err)
 		}
 	} else {
-		// POST 模式：Body 通常为 JSON 或 普通文本，直接替换即可
+		// POST 模式：Body 通常为 JSON 或 普通文本
+		escapeJSON := func(s string) string {
+			b, err := json.Marshal(s)
+			if err != nil {
+				return s
+			}
+			return string(b[1 : len(b)-1])
+		}
+
 		replacerPost := strings.NewReplacer(
-			"{{Domain}}", data.Domain,
-			"{{OldAddr}}", data.OldAddr,
-			"{{NewAddr}}", data.NewAddr,
-			"{{Provider}}", data.Provider,
-			"{{State}}", data.State,
-			"{{Date}}", data.Date,
+			"{{Domain}}", escapeJSON(data.Domain),
+			"{{OldAddr}}", escapeJSON(data.OldAddr),
+			"{{NewAddr}}", escapeJSON(data.NewAddr),
+			"{{Provider}}", escapeJSON(data.Provider),
+			"{{State}}", escapeJSON(data.State),
+			"{{Date}}", escapeJSON(data.Date),
 		)
 		body := replacerPost.Replace(w.Body)
 		req, err = http.NewRequest(http.MethodPost, w.URL, strings.NewReader(body))
@@ -88,11 +97,13 @@ func (w *Webhook) Send(data *WebhookData) error {
 
 	// 校验 HTTP 状态码
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook 返回异常状态码 [%d]: %s", resp.StatusCode, string(respBody))
+		err := fmt.Errorf("webhook 返回异常状态码 [%d]: %s", resp.StatusCode, string(respBody))
+		slog.Error("webhook 发送失败！", "err", err)
+		return err
 	}
 
 	// 修正：转为 string 打印日志
-	slog.Info("webhook 发送成功！", "API返回", string(respBody))
+	slog.Info("webhook 发送成功！")
 
 	return nil
 }
