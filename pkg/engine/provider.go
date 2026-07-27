@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"ddns/pkg/addr"
 	"ddns/pkg/config"
 	"ddns/pkg/provider"
 	"ddns/pkg/utils"
@@ -76,6 +75,8 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	if interval < 5 || interval > 60 {
 		interval = 10
 	}
+
+	//新建定时器
 	ticker := time.NewTicker(interval * time.Second)
 	defer ticker.Stop()
 
@@ -117,27 +118,34 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 			logger.Info("跳过同步", "subDomain", subDomain, "currentAddr", currentAddr, "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync.Truncate(time.Second))
 			continue
 		}
+
+		//获取缓存的IP地址
 		oldAddr := netip.Addr{}
-		if cache, ok := recordState.cacheSubDomain[subDomain]; ok {
+		if cache, ok := recordState.GetCache(subDomain); ok {
 			oldAddr = cache.Addr
 		}
 
 		// 执行DNS服务商操作
 		if err := p.syncToProvider(ctx, subDomain, record, currentAddr, oldAddr); err != nil {
 			logger.Error("同步失败", "subDomain", subDomain, "err", err)
-			//同步失败发送 webhook 通知
-			p.sendNotification(&webhook.WebhookData{
-				Domain:   subDomain,
-				OldAddr:  oldAddr.String(),
-				NewAddr:  currentAddr.String(),
-				Provider: p.provider.Provider,
-				State:    fmt.Sprintf("同步失败: %v", err),
-				Date:     time.Now().Format("2006-01-02 15:04:05"),
-			})
+			// 计算失败计数
+			failCount := recordState.IncFailCount(subDomain)
+			if failCount == 3 {
+				//连续同步3次失败发送 webhook 通知
+				p.sendNotification(&webhook.WebhookData{
+					Domain:   subDomain,
+					OldAddr:  oldAddr.String(),
+					NewAddr:  currentAddr.String(),
+					Provider: p.provider.Provider,
+					State:    fmt.Sprintf("连续同步失败3次: %v", err),
+					Date:     time.Now().Format("2006-01-02 15:04:05"),
+				})
+			}
+
 			continue // 当前子域名失败，不更新缓存，下一轮重试
 		}
 
-		// 同步成功，封装好的缓存更新
+		// 同步成功，更新缓存和重置失败计数器
 		recordState.UpdateCache(subDomain, currentAddr)
 	}
 }
@@ -145,8 +153,18 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 // syncToProvider 同步子域名记录到DNS服务商
 func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr, oldAddr netip.Addr) error {
 	logger := p.logger(record.Name)
-	//调用DNS运营商
-	resRecords, err := p.operator.GetSub(ctx, subDomain, record.IPVersion)
+
+	// 调用dns api 获取记录信息
+	var resRecords []provider.Record
+	err := utils.DoWithDefaultRetry(ctx, func() error {
+		var err error
+		//调用DNS运营商
+		resRecords, err = p.operator.GetSub(ctx, subDomain, record.IPVersion)
+		if errors.Is(err, provider.ErrRecordNotFound) {
+			return err
+		}
+		return err
+	})
 
 	// 记录不存在，创建
 	if errors.Is(err, provider.ErrRecordNotFound) {
@@ -155,14 +173,19 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		if err != nil {
 			return err
 		}
+
 		//创建记录
-		_, err = p.operator.Create(ctx, &provider.Record{
-			Type:       record.IPVersion.RecordType(),
-			RR:         rr,
-			DomainName: domain,
-			Value:      currentAddr.String(),
-			TTL:        record.TTL,
+		err = utils.DoWithDefaultRetry(ctx, func() error {
+			_, createErr := p.operator.Create(ctx, &provider.Record{
+				Type:       record.IPVersion.RecordType(),
+				RR:         rr,
+				DomainName: domain,
+				Value:      currentAddr.String(),
+				TTL:        record.TTL,
+			})
+			return createErr
 		})
+
 		if err == nil {
 
 			logger.Info("DNS记录已创建", "subDomain", subDomain, "currentAddr", currentAddr)
@@ -183,7 +206,10 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	if err != nil {
 		return err
 	}
-
+	//全部都更新成功才发送webhook
+	hasUpdated := false
+	// 记录dns api返回的IP地址
+	resOldAddr := ""
 	//记录存在，更新
 	for _, resRecord := range resRecords {
 		//DNS服务商返回的和本地当前IP地址相同，跳过更新
@@ -191,17 +217,32 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 			logger.Info("云端解析记录未改变，无需更新", "subDomain", subDomain, "currentAddr", currentAddr)
 			continue
 		}
+		// 记录旧IP地址，用于发送webhook
+		resOldAddr = resRecord.Value
+		//拷贝dns服务商返回的记录
 		reqRecord := resRecord
+		//赋值新IP地址
 		reqRecord.Value = currentAddr.String()
-		if err := p.operator.Update(ctx, &reqRecord); err != nil {
+
+		// 带重试的dns更新请求
+		err := utils.DoWithDefaultRetry(ctx, func() error {
+			return p.operator.Update(ctx, &reqRecord)
+		})
+		if err != nil {
 			return fmt.Errorf("更新记录失败: %w", err)
 		}
 		logger.Info("DNS记录已更新", "subDomain", subDomain, "oldAddr", resRecord.Value, "newAddr", currentAddr)
 
+		//所以记录都更新成功才发送webhook
+		// 有些dns服务商相同记录可以有多条，比如：阿里云
+		hasUpdated = true
+
+	}
+	if hasUpdated {
 		//更新 IP 成功发送 webhook 通知
 		p.sendNotification(&webhook.WebhookData{
 			Domain:   subDomain,
-			OldAddr:  resRecord.Value,
+			OldAddr:  resOldAddr,
 			NewAddr:  currentAddr.String(),
 			Provider: p.provider.Provider,
 			State:    "更新记录成功",
@@ -212,6 +253,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 }
 
 // sendNotification 封装安全的异步 Webhook 通知发送
+// 网络超时由 webhook 控制
 func (p *Provider) sendNotification(data *webhook.WebhookData) {
 	if p.notifier == nil {
 		return
@@ -231,81 +273,4 @@ func (p *Provider) logger(record string) *slog.Logger {
 		"provider", p.provider.Name,
 		"record", record,
 	)
-}
-
-// SubDomainInfo 子域名同步缓存，以子域名为最新缓存对象。
-type SubDomainInfo struct {
-	//IP地址缓存，即上传同步的
-	Addr netip.Addr
-	//上次同步的时间
-	LastSyncAt time.Time
-}
-
-// RecordState 管理单个 Record 的 IP 解析器与同步缓存状态
-type RecordState struct {
-	fetcher        addr.Fetcher
-	filter         addr.Filter
-	selector       addr.Selector
-	cacheSubDomain map[string]SubDomainInfo
-}
-
-func NewRecordState(config *config.Record) (*RecordState, error) {
-	fetcher, err := addr.NewFetcher(config.GetType, config.GetValue)
-	if err != nil {
-		return nil, err
-	}
-	filter, err := addr.NewFilter(config.IPVersion)
-	if err != nil {
-		return nil, err
-	}
-	selector := addr.NewSelector(config.Rule)
-
-	return &RecordState{
-		fetcher:  fetcher,
-		filter:   filter,
-		selector: selector,
-		//子域名缓存，key是子域名
-		cacheSubDomain: make(map[string]SubDomainInfo),
-	}, nil
-
-}
-
-// Resolve 执行 IP 获取和过滤
-func (r *RecordState) Resolve(ctx context.Context) (netip.Addr, error) {
-	addrs, err := r.fetcher.Fetch(ctx)
-	if err != nil {
-		return netip.Addr{}, err
-	}
-	addrs = addr.FilterAddrs(addrs, r.filter, addr.IsPublic)
-
-	addr := r.selector.Select(addrs)
-	if !addr.IsValid() {
-		return netip.Addr{}, fmt.Errorf("未筛选出有效的公网 IP")
-	}
-
-	return addr, nil
-}
-
-// ShouldSync 判断子域名是否需要同步，并返回距离下次强制同步的剩余时间
-func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr, forceIntervalMinutes time.Duration) (bool, time.Duration) {
-	cache, exists := r.cacheSubDomain[subDomain]
-	if !exists || cache.Addr != currentAddr {
-		return true, 0
-	}
-
-	forceInterval := forceIntervalMinutes * time.Minute
-	elapsed := time.Since(cache.LastSyncAt)
-	if elapsed >= forceInterval {
-		return true, 0
-	}
-
-	return false, forceInterval - elapsed
-}
-
-// UpdateCache 更新成功后的同步缓存
-func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr) {
-	r.cacheSubDomain[subDomain] = SubDomainInfo{
-		Addr:       currentAddr,
-		LastSyncAt: time.Now(),
-	}
 }
