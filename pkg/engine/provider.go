@@ -72,7 +72,7 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	//设置定时器
 	//允许范围是5-60秒
 	interval := record.Interval
-	if interval < 5 || interval > 60 {
+	if interval < 10 || interval > 60 {
 		interval = 10
 	}
 
@@ -106,7 +106,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 	//强制同步时间，单位分钟
 	//允许范围在1-30分钟
 	forceInterval := p.provider.ForceInterval
-	if forceInterval < 1 || forceInterval > 30 {
+	if forceInterval < 5 || forceInterval > 30 {
 		forceInterval = 5
 	}
 
@@ -127,22 +127,24 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 
 		// 执行DNS服务商操作
 		if err := p.syncToProvider(ctx, subDomain, record, currentAddr, oldAddr); err != nil {
-			logger.Error("同步失败", "subDomain", subDomain, "err", err)
-			// 计算失败计数
-			failCount := recordState.IncFailCount(subDomain)
-			if failCount == 3 {
+			// 获取失败计数
+			failCount, nextRetryGap := recordState.IncFailCount(subDomain, forceInterval)
+			msg := fmt.Sprintf("第%d次同步失败!", failCount)
+			logger.Error(msg, "subDomain", subDomain, "err", err, "nextRetryGap", nextRetryGap.Truncate(time.Second))
+
+			if failCount == 1 || failCount%3 == 0 {
 				//连续同步3次失败发送 webhook 通知
 				p.sendNotification(&webhook.WebhookData{
 					Domain:   subDomain,
 					OldAddr:  oldAddr.String(),
 					NewAddr:  currentAddr.String(),
 					Provider: p.provider.Provider,
-					State:    fmt.Sprintf("连续同步失败3次: %v", err),
+					State:    fmt.Sprintf("第%d次同步失败 err: %v nextRetryGap:%v", failCount, err, nextRetryGap.Truncate(time.Second)),
 					Date:     time.Now().Format("2006-01-02 15:04:05"),
 				})
 			}
 
-			continue // 当前子域名失败，不更新缓存，下一轮重试
+			continue // 当前子域名操作失败，不更新缓存，下一轮重试
 		}
 
 		// 同步成功，更新缓存和重置失败计数器

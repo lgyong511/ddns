@@ -18,6 +18,8 @@ type SubDomainInfo struct {
 	LastSyncAt time.Time
 	//失败次数
 	FailCount int
+	//下次重试等待间隔
+	NextRetryGap time.Duration
 }
 
 // RecordState 管理单个 Record 的 IP 解析器与同步缓存状态
@@ -66,17 +68,35 @@ func (r *RecordState) Resolve(ctx context.Context) (netip.Addr, error) {
 	return addr, nil
 }
 
-// ShouldSync 判断子域名是否需要同步，并返回距离下次强制同步的剩余时间
+// ShouldSync 子域名是否需要同步处理
+// 参数：子域名，当前IP地址，最大与DNS API同步时间
+// 返回值：是否同步，剩余同步时间
 func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr, forceIntervalMinutes time.Duration) (bool, time.Duration) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	cache, exists := r.cacheSubDomain[subDomain]
-	if !exists || cache.Addr != currentAddr {
+	forceInterval := forceIntervalMinutes * time.Minute
+
+	// 首次触发，刚启动没有缓存
+	if !exists {
 		return true, 0
 	}
 
-	forceInterval := forceIntervalMinutes * time.Minute
+	//检查是否已过设定的退避时间
 	elapsed := time.Since(cache.LastSyncAt)
+	if cache.FailCount > 0 {
+		if elapsed >= cache.NextRetryGap {
+			return true, 0
+		}
+		return false, cache.NextRetryGap - elapsed
+	}
+
+	// IP地址变了，触发同步
+	if cache.Addr != currentAddr {
+		return true, 0
+	}
+
+	// IP地址没变，时间到了最大同步时间，防止其他方式改变了云端记录
 	if elapsed >= forceInterval {
 		return true, 0
 	}
@@ -92,14 +112,30 @@ func (r *RecordState) GetCache(subDomain string) (SubDomainInfo, bool) {
 	return cache, exists
 }
 
-// IncFailCount 增加失败计数并返回最新的失败次数
-func (r *RecordState) IncFailCount(SubDomain string) int {
+// IncFailCount 同步失败状态处理
+// 参数：子域名和最大与DNS API同步时间
+// 返回：失败次数和重试时间
+func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes time.Duration) (int, time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	info := r.cacheSubDomain[SubDomain]
 	info.FailCount++
+
+	//缓存不存在时，刷新失败发生的时间点
+	info.LastSyncAt = time.Now()
+
+	//计算下次重试时间，以30秒为基准。
+	nextGap := time.Duration(info.FailCount) * 30 * time.Second
+	maxInterval := maxIntervalMinutes * time.Minute
+	//最长不能大于最大同步时间
+	if nextGap > maxInterval {
+		nextGap = maxInterval
+	}
+	info.NextRetryGap = nextGap
+
+	//写入缓存
 	r.cacheSubDomain[SubDomain] = info
-	return info.FailCount
+	return info.FailCount, info.NextRetryGap
 }
 
 // UpdateCache 记录同步成功后的更新缓存
@@ -110,6 +146,7 @@ func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr) {
 		Addr:       currentAddr,
 		LastSyncAt: time.Now(),
 		//成功后重置失败计数
-		FailCount: 0,
+		FailCount:    0,
+		NextRetryGap: 0,
 	}
 }
