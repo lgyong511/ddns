@@ -12,7 +12,6 @@ import (
 	"sort"
 
 	"golang.org/x/exp/maps"
-	"golang.org/x/time/rate"
 )
 
 // Create: 新增记录成功返回Record，Update: 无有效数据，Delete: 无有效数据，Get: 返回Record切片
@@ -34,7 +33,6 @@ const (
 type Aliyun struct {
 	AccessKeyId     string
 	AccessKeySecret string
-	limiter         *rate.Limiter
 }
 
 // NewAliyun 新建阿里云DNS
@@ -44,7 +42,6 @@ func NewAliyun(accessKeyId, accessKeySecret string) *Aliyun {
 	return &Aliyun{
 		AccessKeyId:     accessKeyId,
 		AccessKeySecret: accessKeySecret,
-		limiter:         rate.NewLimiter(5, 10), // 每秒5次请求，允许突发10次
 	}
 }
 
@@ -248,9 +245,6 @@ func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
 
 // do 发送请求
 func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
-	if err := a.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("do: 请求被取消或超时: %v", err)
-	}
 	urlStr := "https://" + req.host + req.canonicalUri
 	q := url.Values{}
 	keys := maps.Keys(req.queryParam)

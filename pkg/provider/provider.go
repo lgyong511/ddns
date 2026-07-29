@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 var (
@@ -15,18 +17,37 @@ var (
 	// HTTPClient 全局共享的 HTTP 客户端
 	HTTPClient = &http.Client{
 		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			// Proxy: http.ProxyFromEnvironment, // 自动读取系统的 HTTP_PROXY / HTTPS_PROXY
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,  // 建立连接超时
-				KeepAlive: 30 * time.Second, // 保持心跳
-			}).DialContext,
-			MaxIdleConns:        100,              // 全局最大空闲连接
-			MaxIdleConnsPerHost: 10,               // 每个服务商的最大空闲连接
-			IdleConnTimeout:     90 * time.Second, // 90秒无操作自动释放连接
+		Transport: &rateLimitedTransport{
+			limiter: rate.NewLimiter(rate.Limit(10), 30),
+			base: &http.Transport{
+				Proxy: http.ProxyFromEnvironment, // 自动读取系统的 HTTP_PROXY / HTTPS_PROXY
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,  // 建立连接超时
+					KeepAlive: 30 * time.Second, // 保持心跳
+				}).DialContext,
+				MaxIdleConns:        100,              // 全局最大空闲连接
+				MaxIdleConnsPerHost: 10,               // 每个服务商的最大空闲连接
+				IdleConnTimeout:     90 * time.Second, // 90秒无操作自动释放连接
+			},
 		},
 	}
 )
+
+// rateLimitedTransport 包装原生的 RoundTripper 以增加 API 频控/限流
+type rateLimitedTransport struct {
+	limiter *rate.Limiter
+	base    http.RoundTripper
+}
+
+// RoundTrip 实现RoundTripper接口
+func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// 在真正发起网络请求前，阻塞等待获取令牌
+	// 如果 req.Context() 被取消（比如超时），Wait 会直接返回 context.Canceled 错误
+	if err := t.limiter.Wait(req.Context()); err != nil {
+		return nil, err
+	}
+	return t.base.RoundTrip(req)
+}
 
 // Getter 域名解析记录获取接口
 type Getter interface {

@@ -11,8 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -28,9 +26,8 @@ const (
 
 // Huawei 华为云DNS
 type Huawei struct {
-	Key     string
-	Secret  string
-	limiter *rate.Limiter
+	Key    string
+	Secret string
 
 	// 缓存 ZoneId 并加锁防并发崩溃
 	zoneId map[string]string
@@ -42,10 +39,9 @@ type Huawei struct {
 // key和secret：华为云密钥
 func NewHuawei(key, secret string) *Huawei {
 	return &Huawei{
-		Key:     key,
-		Secret:  secret,
-		limiter: rate.NewLimiter(5, 10), // 每秒限制5次请求,允许突发10次
-		zoneId:  make(map[string]string),
+		Key:    key,
+		Secret: secret,
+		zoneId: make(map[string]string),
 	}
 }
 
@@ -221,9 +217,6 @@ func (h *Huawei) addAndUpdate(ctx context.Context, r *provider.Record) error {
 
 // do 发送请求
 func (h *Huawei) do(ctx context.Context, action, urlStr string, body string) ([]byte, error) {
-	if err := h.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("do: 请求被取消或超时: %v", err)
-	}
 	httpReq, err := http.NewRequestWithContext(ctx, action, urlStr, strings.NewReader(body))
 	if err != nil {
 		return nil, err

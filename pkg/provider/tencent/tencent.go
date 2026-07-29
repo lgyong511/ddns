@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -33,7 +31,6 @@ const (
 type Tencent struct {
 	secretId  string
 	secretKey string
-	limiter   *rate.Limiter
 }
 
 // NewTencent 新建腾讯云DNS
@@ -43,7 +40,6 @@ func NewTencent(accessKeyId, accessKeySecret string) *Tencent {
 	return &Tencent{
 		secretId:  accessKeyId,
 		secretKey: accessKeySecret,
-		limiter:   rate.NewLimiter(5, 10), // 每秒限制5次请求
 	}
 }
 
@@ -194,9 +190,6 @@ func (t *Tencent) Delete(ctx context.Context, recordId, domain string) error {
 
 // do 发送请求
 func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error) {
-	if err := t.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("do: 请求被取消或超时: %v", err)
-	}
 	var timestamp = time.Now().Unix()
 
 	authorization := t.sign(action, payload, timestamp)
