@@ -107,6 +107,12 @@ func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr) (bool
 		return true, 0
 	}
 
+	// 剩余时间不足5秒时，触发同步
+	// 已经到了触发同步时间了，但是计算有毫秒级误差
+	if forceInterval-elapsed <= 5*time.Second {
+		return true, 0
+	}
+
 	return false, forceInterval - elapsed
 }
 
