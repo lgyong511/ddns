@@ -237,10 +237,6 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return fmt.Errorf("Tencent addAndUpdate: secretId 或 secretKey 为空值")
 	}
 
-	// 参数校验与兜底
-	if r.TTL > 86400 || r.TTL < 1 {
-		r.TTL = 600
-	}
 	if r.RR == "" || r.Type == "" || r.Value == "" {
 		return fmt.Errorf("addAndUpdate: 参数不完整！%+v", r)
 	}

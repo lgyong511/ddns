@@ -20,6 +20,8 @@ type SubDomainInfo struct {
 	FailCount int
 	//下次重试等待间隔
 	NextRetryGap time.Duration
+	//下一次强制同步时间
+	NextForceInterval time.Duration
 }
 
 // RecordState 管理单个 Record 的 IP 解析器与同步缓存状态
@@ -71,11 +73,11 @@ func (r *RecordState) Resolve(ctx context.Context) (netip.Addr, error) {
 // ShouldSync 子域名是否需要同步处理
 // 参数：子域名，当前IP地址，最大与DNS API同步时间
 // 返回值：是否同步，剩余同步时间
-func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr, forceIntervalMinutes time.Duration) (bool, time.Duration) {
+func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr) (bool, time.Duration) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	cache, exists := r.cacheSubDomain[subDomain]
-	forceInterval := forceIntervalMinutes * time.Minute
 
 	// 首次触发，刚启动没有缓存
 	if !exists {
@@ -97,6 +99,10 @@ func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr, force
 	}
 
 	// IP地址没变，时间到了最大同步时间，防止其他方式改变了云端记录
+	forceInterval := cache.NextForceInterval
+	if forceInterval <= 0 {
+		forceInterval = 1 * time.Minute
+	}
 	if elapsed >= forceInterval {
 		return true, 0
 	}
@@ -139,14 +145,28 @@ func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes time.Dur
 }
 
 // UpdateCache 记录同步成功后的更新缓存
-func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr) {
+func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr, maxForceMinutes time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	oldCache, exists := r.cacheSubDomain[subDomain]
+	baseInterval := 1 * time.Minute
+	maxInterval := maxForceMinutes * time.Minute
+	var nextInterval time.Duration
+
+	if !exists || oldCache.Addr != currentAddr {
+		nextInterval = baseInterval
+	} else {
+		nextInterval = oldCache.NextForceInterval + 1*time.Minute
+		nextInterval = min(nextInterval, maxInterval)
+	}
+
 	r.cacheSubDomain[subDomain] = SubDomainInfo{
 		Addr:       currentAddr,
 		LastSyncAt: time.Now(),
 		//成功后重置失败计数
-		FailCount:    0,
-		NextRetryGap: 0,
+		FailCount:         0,
+		NextRetryGap:      0,
+		NextForceInterval: nextInterval,
 	}
 }

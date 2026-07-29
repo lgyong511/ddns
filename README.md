@@ -10,6 +10,9 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 - 支持 IPv4 / IPv6
 - 支持热加载配置文件变化
 - 提供 Docker 部署方式
+- 各 DNS 服务商客户端内置 API 限流设计
+- 支持失败重试与强制同步策略
+- 支持异步 Webhook 通知
 
 ## 当前支持
 
@@ -227,23 +230,23 @@ make run
 
 ### providers
 
-- `name`：当前 Provider 的名称
-- `provider`：DNS 服务商类型， `aliyun`、`tencent`、`huawei`
-- `keyId`：API访问KEY
-- `keySecret`：API访问Secret
-- `forceInterval`：强制同步的时间间隔，单位分钟
-- `records`：要同步的解析记录列表
+- `name`：必选，当前 Provider 的名称
+- `provider`：必选，DNS 服务商类型， `aliyun`、`tencent`、`huawei`
+- `keyId`：必选，API访问KEY
+- `keySecret`：必选，API访问Secret
+- `forceInterval`：可选，强制同步的时间间隔，单位分钟，默认15分钟，可配置范围5-30分钟
+- `records`：必选，要同步的解析记录列表
 
 ### records
 
-- `name`：记录组名称
-- `subDomains`：要更新的子域名列表
-- `ipVersion`：`4` 表示 IPv4，`6` 表示 IPv6
-- `ttl`：DNS 记录生存时间，单位秒
-- `getType`：IP 获取方式，cmd、url、nic、duid
-- `getValue`：对应获取方式的参数
-- `interval`：检测周期，单位秒
-- `rule`：IP 过滤规则
+- `name`：必选，记录组名称
+- `subDomains`：必选，要更新的子域名列表
+- `ipVersion`：必选，`4` 表示 IPv4，`6` 表示 IPv6
+- `ttl`：可选，DNS 记录生存时间，单位秒，默认600秒，可配置范围1-86400秒，警告：请确定服务商支持小的生效时间
+- `getType`：必选，IP 获取方式，cmd、url、nic、duid
+- `getValue`：必选，对应获取方式的参数
+- `interval`：可选，检测周期，单位秒，默认30秒，可配置范围10-60秒
+- `rule`：可选，IP 过滤规则，可配置范围：[跳转到rule说明](#rule说明)
 
 ### webhook
 

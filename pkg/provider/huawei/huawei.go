@@ -153,9 +153,6 @@ func (h *Huawei) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return fmt.Errorf("addAndUpdate: 凭证不能为空")
 	}
 
-	if r.TTL > 86400 || r.TTL < 1 {
-		r.TTL = 600
-	}
 	if r.RR == "" || r.Type == "" || r.Value == "" {
 		return fmt.Errorf("addAndUpdate: 参数不完整！%v", r)
 	}

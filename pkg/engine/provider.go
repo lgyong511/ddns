@@ -73,7 +73,7 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	//允许范围是5-60秒
 	interval := record.Interval
 	if interval < 10 || interval > 60 {
-		interval = 10
+		interval = 30
 	}
 
 	//新建定时器
@@ -107,15 +107,18 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 	//允许范围在1-30分钟
 	forceInterval := p.provider.ForceInterval
 	if forceInterval < 5 || forceInterval > 30 {
-		forceInterval = 5
+		forceInterval = 15
 	}
 
 	// 遍历所有子域名
 	for _, subDomain := range record.SubDomains {
 		//判断是否需要更新和计算剩余强制和DNS服务商对齐时间
-		needSync, timeUntilForceSync := recordState.ShouldSync(subDomain, currentAddr, forceInterval)
+		needSync, timeUntilForceSync := recordState.ShouldSync(subDomain, currentAddr)
 		if !needSync {
-			logger.Info("跳过同步", "subDomain", subDomain, "currentAddr", currentAddr, "reason", "ip unchanged", "timeUntilForceSync", timeUntilForceSync.Truncate(time.Second))
+			logger.Info("同步时间未到",
+				"subDomain", subDomain,
+				"IP", currentAddr,
+				"timeUntilForceSync", timeUntilForceSync.Truncate(time.Second))
 			continue
 		}
 
@@ -126,14 +129,17 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 		}
 
 		// 执行DNS服务商操作
-		if err := p.syncToProvider(ctx, subDomain, record, currentAddr, oldAddr); err != nil {
+		if err := p.syncToProvider(ctx, subDomain, record, currentAddr); err != nil {
 			// 获取失败计数
 			failCount, nextRetryGap := recordState.IncFailCount(subDomain, forceInterval)
 			msg := fmt.Sprintf("第%d次同步失败!", failCount)
-			logger.Error(msg, "subDomain", subDomain, "err", err, "nextRetryGap", nextRetryGap.Truncate(time.Second))
+			logger.Error(msg,
+				"subDomain", subDomain,
+				"err", err,
+				"nextRetryGap", nextRetryGap.Truncate(time.Second))
 
+			//连续同步多次失败发送 webhook 通知，约每三次发送一次
 			if failCount == 1 || failCount%3 == 0 {
-				//连续同步3次失败发送 webhook 通知
 				p.sendNotification(&webhook.WebhookData{
 					Domain:   subDomain,
 					OldAddr:  oldAddr.String(),
@@ -148,13 +154,18 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 		}
 
 		// 同步成功，更新缓存和重置失败计数器
-		recordState.UpdateCache(subDomain, currentAddr)
+		recordState.UpdateCache(subDomain, currentAddr, forceInterval)
 	}
 }
 
 // syncToProvider 同步子域名记录到DNS服务商
-func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr, oldAddr netip.Addr) error {
+func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record *config.Record, currentAddr netip.Addr) error {
 	logger := p.logger(record.Name)
+
+	ttl := record.TTL
+	if record.TTL > 86400 || record.TTL < 1 {
+		ttl = 600
+	}
 
 	// 调用dns api 获取记录信息
 	var resRecords []provider.Record
@@ -183,18 +194,18 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 				RR:         rr,
 				DomainName: domain,
 				Value:      currentAddr.String(),
-				TTL:        record.TTL,
+				TTL:        ttl,
 			})
 			return createErr
 		})
 
 		if err == nil {
 
-			logger.Info("DNS记录已创建", "subDomain", subDomain, "currentAddr", currentAddr)
+			logger.Info("创建记录成功", "subDomain", subDomain, "IP", currentAddr)
 			// 创建新记录成功发送 webhook 通知
 			p.sendNotification(&webhook.WebhookData{
-				Domain:   subDomain,
-				OldAddr:  oldAddr.String(),
+				Domain: subDomain,
+				// OldAddr:  oldAddr.String(),
 				NewAddr:  currentAddr.String(),
 				Provider: p.provider.Provider,
 				State:    "创建记录成功",
@@ -216,7 +227,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	for _, resRecord := range resRecords {
 		//DNS服务商返回的和本地当前IP地址相同，跳过更新
 		if resRecord.Value == currentAddr.String() {
-			logger.Info("云端解析记录未改变，无需更新", "subDomain", subDomain, "currentAddr", currentAddr)
+			logger.Info("当前IP地址与云端一致", "subDomain", subDomain, "IP", currentAddr)
 			continue
 		}
 		// 记录旧IP地址，用于发送webhook
@@ -225,6 +236,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		reqRecord := resRecord
 		//赋值新IP地址
 		reqRecord.Value = currentAddr.String()
+		reqRecord.TTL = ttl
 
 		// 带重试的dns更新请求
 		err := utils.DoWithDefaultRetry(ctx, func() error {
@@ -233,7 +245,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		if err != nil {
 			return fmt.Errorf("更新记录失败: %w", err)
 		}
-		logger.Info("DNS记录已更新", "subDomain", subDomain, "oldAddr", resRecord.Value, "newAddr", currentAddr)
+		logger.Info("更新记录成功", "subDomain", subDomain, "old_IP", resRecord.Value, "new_IP", currentAddr)
 
 		//所以记录都更新成功才发送webhook
 		// 有些dns服务商相同记录可以有多条，比如：阿里云

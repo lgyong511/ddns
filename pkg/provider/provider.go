@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -87,20 +86,4 @@ type Record struct {
 	Type       string // A / AAAA / CNAME ...
 	Value      string // 记录值，IP地址或CNAME等
 	TTL        int64  // 生存时间，单位秒
-}
-
-// String 记录信息字符串表示
-func (r *Record) String() string {
-	if r == nil {
-		return ""
-	}
-	return fmt.Sprintf("RecordID=%s, DomainName=%s, RR=%s, Type=%s, Value=%s, TTL=%d", r.RecordId, r.DomainName, r.RR, r.Type, r.Value, r.TTL)
-}
-
-// ToJSON 转JSON字符串表示
-func (r *Record) ToJSON() string {
-	if r == nil {
-		return ""
-	}
-	return fmt.Sprintf(`{"RecordId":"%s", "DomainName":"%s", "RR":"%s", "Type":"%s", "Value":"%s", "TTL":%d}`, r.RecordId, r.DomainName, r.RR, r.Type, r.Value, r.TTL)
 }
