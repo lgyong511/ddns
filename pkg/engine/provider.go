@@ -71,13 +71,12 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 
 	//设置定时器
 	//允许范围是5-60秒
-	interval := record.Interval
-	if interval < 10 || interval > 60 {
-		interval = 30
+	if record.Interval < 10 || record.Interval > 60 {
+		record.Interval = 30
 	}
 
 	//新建定时器
-	ticker := time.NewTicker(interval * time.Second)
+	ticker := time.NewTicker(record.Interval * time.Second)
 	defer ticker.Stop()
 
 	//死循环监听ctx和定时器
@@ -113,18 +112,19 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 	// 遍历所有子域名
 	for _, subDomain := range record.SubDomains {
 		//判断是否需要更新和计算剩余强制和DNS服务商对齐时间
-		needSync, timeUntilForceSync := recordState.ShouldSync(subDomain, currentAddr)
+		needSync, nextForceSyncIn := recordState.ShouldSync(subDomain, currentAddr)
 		if !needSync {
-			logger.Info("同步时间未到",
+			msg := fmt.Sprintf("IP 未变，%v秒后重获IP", record.Interval*time.Second)
+			logger.Info(msg,
 				"subDomain", subDomain,
 				"IP", currentAddr,
-				"timeUntilForceSync", timeUntilForceSync.Truncate(time.Second))
+				"nextForceSyncIn", nextForceSyncIn.Truncate(time.Second))
 			continue
 		}
 
 		//获取缓存的IP地址
 		oldAddr := netip.Addr{}
-		if cache, ok := recordState.GetCache(subDomain); ok {
+		if cache, exists := recordState.GetCache(subDomain); exists {
 			oldAddr = cache.Addr
 		}
 
@@ -154,7 +154,8 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 		}
 
 		// 同步成功，更新缓存和重置失败计数器
-		recordState.UpdateCache(subDomain, currentAddr, forceInterval)
+		nextForceSyncIn = recordState.UpdateCache(subDomain, currentAddr, forceInterval)
+		logger.Info("子域名记录同步完成", "subDomain", subDomain, "IP", currentAddr, "nextForceSyncIn", nextForceSyncIn.Truncate(time.Second))
 	}
 }
 
@@ -173,9 +174,9 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		var err error
 		//调用DNS运营商
 		resRecords, err = p.operator.GetSub(ctx, subDomain, record.IPVersion)
-		if errors.Is(err, provider.ErrRecordNotFound) {
-			return err
-		}
+		// if errors.Is(err, provider.ErrRecordNotFound) {
+		// 	return err
+		// }
 		return err
 	})
 
@@ -227,7 +228,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	for _, resRecord := range resRecords {
 		//DNS服务商返回的和本地当前IP地址相同，跳过更新
 		if resRecord.Value == currentAddr.String() {
-			logger.Info("当前IP地址与云端一致", "subDomain", subDomain, "IP", currentAddr)
+			logger.Debug("当前IP地址与云端一致", "subDomain", subDomain, "IP", currentAddr)
 			continue
 		}
 		// 记录旧IP地址，用于发送webhook

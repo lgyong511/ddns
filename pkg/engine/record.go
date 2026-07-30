@@ -100,9 +100,6 @@ func (r *RecordState) ShouldSync(subDomain string, currentAddr netip.Addr) (bool
 
 	// IP地址没变，时间到了最大同步时间，防止其他方式改变了云端记录
 	forceInterval := cache.NextForceInterval
-	if forceInterval <= 0 {
-		forceInterval = 1 * time.Minute
-	}
 	if elapsed >= forceInterval {
 		return true, 0
 	}
@@ -151,7 +148,7 @@ func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes time.Dur
 }
 
 // UpdateCache 记录同步成功后的更新缓存
-func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr, maxForceMinutes time.Duration) {
+func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr, maxForceMinutes time.Duration) time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -175,4 +172,6 @@ func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr, maxF
 		NextRetryGap:      0,
 		NextForceInterval: nextInterval,
 	}
+
+	return nextInterval
 }
