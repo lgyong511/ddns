@@ -16,20 +16,13 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 
 ## 当前支持
 
-- DNS 服务商：aliyun（阿里云）、tencent(腾讯云)、huawei(华为云)
+- DNS 服务商：aliyun（阿里云）、baidu（百度云）、tencent（腾讯云）、huawei（华为云）
 - IP 获取方式：
   - `cmd`：执行系统命令
   - `nic`：读取本机网卡 IP
   - `url`：通过 HTTP 请求获取公网 IP
   - `duid`：适用于 OpenWrt 设备
 
-## 项目结构
-
-- `cmd/ddns`：程序入口
-- `pkg/config`：配置加载与校验
-- `pkg/engine`：主执行引擎
-- `pkg/addr`：IP 获取与过滤
-- `pkg/provider`：DNS 服务商接口与实现
 
 ## 快速开始
 
@@ -231,7 +224,7 @@ make run
 ### providers
 
 - `name`：必选，当前 Provider 的名称
-- `provider`：必选，DNS 服务商类型， `aliyun`、`tencent`、`huawei`
+- `provider`：必选，DNS 服务商类型， `aliyun`、`baidu`、`tencent`、`huawei`
 - `keyId`：必选，API访问KEY
 - `keySecret`：必选，API访问Secret
 - `forceInterval`：可选，强制同步的时间间隔，单位分钟，默认15分钟，可配置范围5-30分钟

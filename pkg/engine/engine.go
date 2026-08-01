@@ -5,6 +5,7 @@ import (
 	"ddns/pkg/config"
 	"ddns/pkg/provider"
 	"ddns/pkg/provider/aliyun"
+	"ddns/pkg/provider/baidu"
 	"ddns/pkg/provider/huawei"
 	"ddns/pkg/provider/tencent"
 	"ddns/pkg/webhook"
@@ -26,6 +27,8 @@ func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error
 	switch provider {
 	case "aliyun":
 		return aliyun.NewAliyun(accessKeyId, accessKeySecret), nil
+	case "baidu":
+		return baidu.NewBaidu(accessKeyId, accessKeySecret), nil
 	case "tencent":
 		return tencent.NewTencent(accessKeyId, accessKeySecret), nil
 	case "huawei":

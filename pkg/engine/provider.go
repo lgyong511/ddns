@@ -114,7 +114,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 		//判断是否需要更新和计算剩余强制和DNS服务商对齐时间
 		needSync, nextForceSyncIn := recordState.ShouldSync(subDomain, currentAddr)
 		if !needSync {
-			msg := fmt.Sprintf("IP 未变，%v秒后重获IP", record.Interval*time.Second)
+			msg := fmt.Sprintf("IP 未变，将%v秒后重获IP", record.Interval*time.Second)
 			logger.Info(msg,
 				"subDomain", subDomain,
 				"IP", currentAddr,
@@ -226,6 +226,10 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	resOldAddr := ""
 	//记录存在，更新
 	for _, resRecord := range resRecords {
+		// 同一 RR 可能同时存在 A 和 AAAA 记录，不能用一种地址更新另一种记录。
+		if resRecord.Type != record.IPVersion.RecordType() {
+			continue
+		}
 		//DNS服务商返回的和本地当前IP地址相同，跳过更新
 		if resRecord.Value == currentAddr.String() {
 			logger.Debug("当前IP地址与云端一致", "subDomain", subDomain, "IP", currentAddr)
