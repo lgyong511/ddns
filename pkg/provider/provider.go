@@ -18,7 +18,7 @@ var (
 	HTTPClient = &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &rateLimitedTransport{
-			limiter: rate.NewLimiter(rate.Limit(10), 30),
+			limiter: rate.NewLimiter(rate.Limit(30), 45),
 			base: &http.Transport{
 				Proxy: http.ProxyFromEnvironment, // 自动读取系统的 HTTP_PROXY / HTTPS_PROXY
 				DialContext: (&net.Dialer{

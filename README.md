@@ -16,7 +16,7 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 
 ## 当前支持
 
-- DNS 服务商：aliyun（阿里云）、baidu（百度云）、tencent（腾讯云）、huawei（华为云）
+- DNS 服务商：aliyun（阿里云）、baidu（百度云）、tencent（腾讯云）、huawei（华为云）、volcengine（火山引擎）
 - IP 获取方式：
   - `cmd`：执行系统命令
   - `nic`：读取本机网卡 IP

@@ -8,6 +8,7 @@ import (
 	"ddns/pkg/provider/baidu"
 	"ddns/pkg/provider/huawei"
 	"ddns/pkg/provider/tencent"
+	"ddns/pkg/provider/volcengine"
 	"ddns/pkg/webhook"
 	"fmt"
 	"log/slog"
@@ -33,6 +34,8 @@ func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error
 		return tencent.NewTencent(accessKeyId, accessKeySecret), nil
 	case "huawei":
 		return huawei.NewHuawei(accessKeyId, accessKeySecret), nil
+	case "volcengine":
+		return volcengine.NewVolcengine(accessKeyId, accessKeySecret), nil
 	default:
 		return nil, fmt.Errorf("不支持的DNS运营商：%v", provider)
 	}
