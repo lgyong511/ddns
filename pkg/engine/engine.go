@@ -6,6 +6,7 @@ import (
 	"ddns/pkg/provider"
 	"ddns/pkg/provider/aliyun"
 	"ddns/pkg/provider/baidu"
+	"ddns/pkg/provider/dnsla"
 	"ddns/pkg/provider/huawei"
 	"ddns/pkg/provider/tencent"
 	"ddns/pkg/provider/volcengine"
@@ -30,6 +31,8 @@ func NewOperator(provider, accessKeyId, accessKeySecret string) (Operator, error
 		return aliyun.NewAliyun(accessKeyId, accessKeySecret), nil
 	case "baidu":
 		return baidu.NewBaidu(accessKeyId, accessKeySecret), nil
+	case "dnsla":
+		return dnsla.NewDNSLA(accessKeyId, accessKeySecret), nil
 	case "tencent":
 		return tencent.NewTencent(accessKeyId, accessKeySecret), nil
 	case "huawei":
