@@ -53,10 +53,10 @@ func (p *Provider) Start(ctx context.Context) {
 	}
 
 	<-ctx.Done()
-	slog.Info("Provider 正在退出", "provider", p.provider.Name)
+	slog.Warn("Provider 正在退出", "provider", p.provider.Name)
 
 	wg.Wait()
-	slog.Info("Provider 已退出", "provider", p.provider.Name)
+	slog.Warn("Provider 已退出", "provider", p.provider.Name)
 }
 
 // watchRecord 监听单个记录的IP地址变化，并同步到DNS服务商
@@ -83,7 +83,7 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("record 监听已停止", "record", record.Name)
+			slog.Warn("record 监听已停止", "record", record.Name)
 			return
 		case <-ticker.C:
 			p.syncRecord(ctx, record, recordState)
@@ -98,9 +98,20 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 	// 获取当前IP地址
 	currentAddr, err := recordState.Resolve(ctx)
 	if err != nil {
-		logger.Error("获取 IP 失败", "err", err)
+		recordState.GetAddrFailCount++
+		msg := fmt.Sprintf("record: %v 第%d次获取 IP 失败 err: %v", record.Name, recordState.GetAddrFailCount, err)
+		logger.Error(msg)
+		//获取IP比较频繁的，连续失败5次才发送通知，避免频繁发送通知
+		if recordState.GetAddrFailCount%5 == 0 || recordState.GetAddrFailCount == 1 {
+			p.sendNotification(&webhook.WebhookData{
+				Provider: p.provider.Provider,
+				State:    msg,
+				Date:     time.Now().Format("2006-01-02 15:04:05"),
+			})
+		}
 		return
 	}
+	recordState.GetAddrFailCount = 0
 
 	//强制同步时间，单位分钟
 	//允许范围在1-30分钟

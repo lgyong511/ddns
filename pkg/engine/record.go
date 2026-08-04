@@ -16,7 +16,7 @@ type SubDomainInfo struct {
 	Addr netip.Addr
 	//上次同步的时间
 	LastSyncAt time.Time
-	//失败次数
+	// API失败次数
 	FailCount int
 	//下次重试等待间隔
 	NextRetryGap time.Duration
@@ -31,6 +31,8 @@ type RecordState struct {
 	filter         addr.Filter
 	selector       addr.Selector
 	cacheSubDomain map[string]SubDomainInfo
+	// 获取IP失败次数
+	GetAddrFailCount int
 }
 
 func NewRecordState(config *config.Record) (*RecordState, error) {
