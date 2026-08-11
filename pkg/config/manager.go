@@ -34,26 +34,34 @@ func (m *Manager) Load(path string) error {
 	m.vp.SetConfigFile(path)
 	//设置配置文件格式
 	m.vp.SetConfigType("yaml")
-	//读取配置文件
+	if err := m.Reload(); err != nil {
+		return err
+	}
+	m.watchConfig()
+	return nil
+}
+
+// Reload 重新读取配置文件并通知监听者。
+func (m *Manager) Reload() error {
 	if err := m.vp.ReadInConfig(); err != nil {
 		return err
 	}
-	//反序化配置到结构体
 	var cfg Config
 	if err := m.vp.Unmarshal(&cfg); err != nil {
 		return err
 	}
-	// 检测配置有效性
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("配置验证失败: %v", err)
 	}
-	//加锁
+
 	m.rwMutex.Lock()
-	//函数结束时解锁
-	defer m.rwMutex.Unlock()
-	//把配置文件赋值给Manager字段
 	m.config = &cfg
-	m.watchConfig()
+	callbacks := slices.Clone(m.callbacks)
+	m.rwMutex.Unlock()
+
+	for _, cb := range callbacks {
+		cb()
+	}
 	return nil
 }
 

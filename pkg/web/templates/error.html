@@ -1,0 +1,18 @@
+{{define "error.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>出错了 - DDNS 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a><nav><a href="/">返回</a></nav></header>
+  <main class="shell narrow">
+    <div class="alert">{{.Error}}</div>
+  </main>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>DDNS 同步</title>
+  <defs>
+    <linearGradient id="cloud" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#cloud)" d="M18 43h28a11 11 0 0 0 1-21.95A17 17 0 0 0 15.8 24.2 9.5 9.5 0 0 0 18 43Z"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="m25 31-5 5 5 5m-5-5h17m5-8 5-5-5-5m5 5H30"/>
+</svg>

@@ -1,0 +1,26 @@
+{{define "setup.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DDNS 控制台 - 首次设置</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <img class="brand-logo" src="/static/logo.svg" alt="DDNS">
+    <h1>首次设置</h1>
+    <p class="muted">创建 Web 控制台账号，密码将以 bcrypt 哈希保存到配置文件。</p>
+    {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+    <form method="post" action="/setup">
+      <label>账号<input name="username" autocomplete="username" required autofocus></label>
+      <label>密码<input name="password" type="password" autocomplete="new-password" required></label>
+      <label>确认密码<input name="confirm" type="password" autocomplete="new-password" required></label>
+      <button class="primary" type="submit">保存账号</button>
+    </form>
+  </main>
+</body>
+</html>
+{{end}}

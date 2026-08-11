@@ -34,13 +34,24 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 ./ddns -c conf.yaml
 ```
 
-如果配置文件名为 `conf.yaml` 且位于程序同目录，也可以直接运行：
+在普通命令行模式（不带 `-web`）下，如果配置文件名为 `conf.yaml` 且位于可执行文件同目录，也可以直接运行：
 
 ```bash
 ./ddns
 ```
 
-### 2. Docker 运行
+该方式仍然有效：程序会按可执行文件所在目录查找 `conf.yaml`。如果使用 `go run`，可执行文件通常位于临时目录，建议使用 `-c` 显式指定配置文件路径。
+
+使用 `-web` 参数启动 Web 控制台，`-p` 参数指定端口：
+
+```bash
+./ddns -web -c conf.yaml -p 8686
+```
+
+启动后访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。首次启动需要先设置登录账号和密码；Web 页面保存的配置默认位于用户目录下的 `.ddns_conf.yaml`。不指定 `-c` 时，Web 模式会尝试从可执行文件同目录的 `conf.yaml` 导入初始配置。更多配置说明请参阅下方的 [Web 控制台](#web-控制台)章节。
+
+
+### 3. Docker 运行
 
 项目当前提供两种镜像构建目标：
 
@@ -70,7 +81,7 @@ docker run -d --name ddns --restart always \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
 
-### 3. 源码编译
+### 4. 源码编译
 
 如果需要自行编译，可以从 GitHub 克隆源码：
 
@@ -86,7 +97,7 @@ go build -o ddns ./cmd/ddns
 make build
 ```
 
-### 4. 准备配置文件
+### 5. 准备配置文件
 
 在项目根目录创建或修改 `conf.yaml`，示例：
 
@@ -201,7 +212,7 @@ providers:
         interval: 30
         rule: ""
 ```
-### 5. 启动程序
+### 6. 启动程序
 
 ```bash
 ./ddns
@@ -213,11 +224,62 @@ providers:
 ./ddns -c /path/to/conf.yaml
 ```
 
-### 6. 使用 Makefile 运行
+### 7. 使用 Makefile 运行
 
 ```bash
 make run
 ```
+
+## Web 控制台
+
+程序支持通过 Web 控制台管理 DDNS 配置。控制台可以创建、编辑和删除 DNS 服务商及解析记录，配置 Webhook，查看运行日志，以及修改登录密码。
+
+### 启动 Web 控制台
+
+源码编译后使用 `-web` 参数启动：
+
+```bash
+./ddns -web
+```
+
+默认监听 `:8686`，启动后访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。可以通过 `-p` 修改端口：
+
+```bash
+./ddns -web -p 9090
+```
+
+首次启动时，如果配置文件中还没有 Web 账号，访问地址会自动跳转到首次设置页面。设置用户名和密码后，使用该账号登录控制台。
+
+### 配置文件说明
+
+Web 模式使用用户目录下的 `.ddns_conf.yaml` 保存配置：
+
+- 如果指定了 `-c`，程序会在首次启动时导入该配置文件；
+- 如果未指定 `-c`，程序会尝试导入可执行文件同目录下的 `conf.yaml`；
+- Web 页面保存配置后，后续以 `.ddns_conf.yaml` 为准；
+- 修改登录密码或 Web 页面中的配置后，程序会更新该文件，并自动重新加载配置。
+
+例如，使用已有配置启动 Web 控制台：
+
+```bash
+./ddns -web -c /path/to/conf.yaml
+```
+
+### Docker 使用 Web 控制台
+
+容器中可以覆盖默认启动命令，并将 Web 配置文件所在的用户目录持久化：
+
+```bash
+docker run -d --name ddns --restart always \
+  --net=host \
+  -v /app/:/app/config/ \
+  -v /app/ddns-home/:/root/ \
+  --entrypoint /app/bin/ddns \
+  ghcr.io/lgyong511/ddns:latest \
+  -web -c /app/config/conf.yaml -p 8686
+```
+
+Web 控制台默认监听所有网卡。部署在公网或局域网环境时，请通过防火墙、反向代理或其他访问控制措施限制访问，并妥善保管登录密码和 DNS 服务商密钥。
 
 ## 配置说明
 

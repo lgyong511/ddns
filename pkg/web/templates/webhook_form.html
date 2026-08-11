@@ -1,0 +1,29 @@
+{{define "webhook_form.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Webhook - DDNS 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a><nav><a href="/">返回</a></nav></header>
+  <main class="shell narrow">
+    <h1>Webhook 配置</h1>
+    {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+    <form class="panel form-grid" method="post" action="/webhook">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Webhook URL<input name="url" value="{{.Form.DisplayURL}}" placeholder="https://example.com/webhook"></label>
+      <label>请求体 Body<textarea name="body" rows="7" placeholder='{"msgtype":"text","text":{"content":"{{"{{"}}Domain{{"}}"}} {{ "{{" }}State{{ "}}" }}"}}'>{{.Form.Body}}</textarea></label>
+      <label>Headers<textarea name="headers" rows="4" placeholder="Content-Type: application/json">{{.Form.Headers}}</textarea></label>
+      <div class="form-actions">
+        <a class="button" href="/">取消</a>
+        <button class="primary" type="submit">保存 Webhook</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
+{{end}}

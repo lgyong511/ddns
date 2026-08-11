@@ -4,19 +4,29 @@ import (
 	"ddns/pkg/provider"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Config 代表整个 YAML 文件的根结构
 type Config struct {
 	Providers []Provider `yaml:"providers" mapstructure:"providers"`
 	Webhook   Webhook    `yaml:"webhook" mapstructure:"webhook"`
+	Auth      Auth       `yaml:"auth" mapstructure:"auth"`
 }
 
 type Webhook struct {
 	URL     string   `yaml:"url" mapstructure:"url"`
 	Body    string   `yaml:"body" mapstructure:"body"`
 	Headers []string `yaml:"headers" mapstructure:"headers"`
+}
+
+type Auth struct {
+	Username     string `yaml:"username" mapstructure:"username"`
+	PasswordHash string `yaml:"passwordHash" mapstructure:"passwordHash"`
 }
 
 // Provider 代表阿里等服务商配置
@@ -32,6 +42,45 @@ type Provider struct {
 	Records []Record `yaml:"records" mapstructure:"records"`
 	// 强制同步时间，单位分钟
 	ForceInterval time.Duration `yaml:"forceInterval" mapstructure:"forceInterval"`
+}
+
+func (p Provider) MarshalYAML() (any, error) {
+	type providerYAML struct {
+		Name          string   `yaml:"name"`
+		Provider      string   `yaml:"provider"`
+		KeyID         string   `yaml:"keyId"`
+		KeySecret     string   `yaml:"keySecret"`
+		Records       []Record `yaml:"records"`
+		ForceInterval int64    `yaml:"forceInterval"`
+	}
+	return providerYAML{
+		Name: p.Name, Provider: p.Provider, KeyID: p.KeyID, KeySecret: p.KeySecret,
+		Records: p.Records, ForceInterval: int64(p.ForceInterval),
+	}, nil
+}
+
+func (p *Provider) UnmarshalYAML(value *yaml.Node) error {
+	type providerYAML struct {
+		Name          string    `yaml:"name"`
+		Provider      string    `yaml:"provider"`
+		KeyID         string    `yaml:"keyId"`
+		KeySecret     string    `yaml:"keySecret"`
+		Records       []Record  `yaml:"records"`
+		ForceInterval yaml.Node `yaml:"forceInterval"`
+	}
+	var raw providerYAML
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	forceInterval, err := durationFromYAML(raw.ForceInterval, 0)
+	if err != nil {
+		return err
+	}
+	*p = Provider{
+		Name: raw.Name, Provider: raw.Provider, KeyID: raw.KeyID, KeySecret: raw.KeySecret,
+		Records: raw.Records, ForceInterval: forceInterval,
+	}
+	return nil
 }
 
 // Record 代表具体解析记录的配置
@@ -52,6 +101,63 @@ type Record struct {
 	Interval time.Duration `yaml:"interval" mapstructure:"interval"`
 	//筛选IP地址的规则
 	Rule string `yaml:"rule" mapstructure:"rule"`
+}
+
+func (r Record) MarshalYAML() (any, error) {
+	type recordYAML struct {
+		Name       string           `yaml:"name"`
+		SubDomains []string         `yaml:"subDomains"`
+		IPVersion  provider.Version `yaml:"ipVersion"`
+		TTL        int64            `yaml:"ttl"`
+		GetType    string           `yaml:"getType"`
+		GetValue   string           `yaml:"getValue"`
+		Interval   int64            `yaml:"interval"`
+		Rule       string           `yaml:"rule"`
+	}
+	return recordYAML{
+		Name: r.Name, SubDomains: r.SubDomains, IPVersion: r.IPVersion, TTL: r.TTL,
+		GetType: r.GetType, GetValue: r.GetValue, Interval: int64(r.Interval), Rule: r.Rule,
+	}, nil
+}
+
+func (r *Record) UnmarshalYAML(value *yaml.Node) error {
+	type recordYAML struct {
+		Name       string           `yaml:"name"`
+		SubDomains []string         `yaml:"subDomains"`
+		IPVersion  provider.Version `yaml:"ipVersion"`
+		TTL        int64            `yaml:"ttl"`
+		GetType    string           `yaml:"getType"`
+		GetValue   string           `yaml:"getValue"`
+		Interval   yaml.Node        `yaml:"interval"`
+		Rule       string           `yaml:"rule"`
+	}
+	var raw recordYAML
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	interval, err := durationFromYAML(raw.Interval, 0)
+	if err != nil {
+		return err
+	}
+	*r = Record{
+		Name: raw.Name, SubDomains: raw.SubDomains, IPVersion: raw.IPVersion, TTL: raw.TTL,
+		GetType: raw.GetType, GetValue: raw.GetValue, Interval: interval, Rule: raw.Rule,
+	}
+	return nil
+}
+
+func durationFromYAML(node yaml.Node, fallback time.Duration) (time.Duration, error) {
+	if node.Kind == 0 || strings.TrimSpace(node.Value) == "" {
+		return fallback, nil
+	}
+	if node.Tag == "!!int" {
+		value, err := strconv.ParseInt(node.Value, 10, 64)
+		return time.Duration(value), err
+	}
+	if value, err := strconv.ParseInt(node.Value, 10, 64); err == nil {
+		return time.Duration(value), nil
+	}
+	return time.ParseDuration(node.Value)
 }
 
 // Validate 检查配置的有效性

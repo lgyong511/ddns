@@ -1,0 +1,48 @@
+{{define "logs.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>系统日志 - DDNS 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body class="logs-page">
+  <header class="topbar">
+    <a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a>
+    <nav>
+      <a href="/">配置</a>
+      <a href="/logs">日志</a>
+      <a href="/password">修改密码</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <button class="ghost" type="submit">退出</button>
+      </form>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="page-title">
+      <div>
+        <h1>系统日志</h1>
+        <p>页面会自动追加 DDNS 引擎和 Web 控制台日志。</p>
+      </div>
+      <div class="actions">
+        <button class="button" type="button" onclick="document.querySelector('#logLines').textContent = ''">清屏</button>
+        <a class="button" href="/">返回</a>
+      </div>
+    </section>
+    <pre class="terminal" id="logLines">{{range .Logs}}{{.}}{{"\n"}}{{end}}</pre>
+  </main>
+  <script>
+    const box = document.querySelector('#logLines');
+    box.scrollTop = box.scrollHeight;
+    const stream = new EventSource('/logs/stream');
+    stream.onmessage = event => {
+      box.textContent += event.data + '\n';
+      box.scrollTop = box.scrollHeight;
+    };
+  </script>
+</body>
+</html>
+{{end}}

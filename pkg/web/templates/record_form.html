@@ -1,0 +1,117 @@
+{{define "record_form.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} - DDNS 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a><nav><a href="/">返回</a></nav></header>
+  <main class="shell">
+    <h1>{{.Title}}</h1>
+    {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+    <form class="panel" method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="form-row two">
+        <label>记录名称<input name="name" value="{{.Form.Name}}" required placeholder="如 nas_ipv6"></label>
+        <label>子域名<input name="subDomains" value="{{.Form.SubDomains}}" required placeholder="nas.example.com, home.example.com"></label>
+      </div>
+      <div class="form-row three">
+        <label>检测间隔 (秒)<input name="interval" type="number" min="10" max="60" value="{{.Form.Interval}}" placeholder="自动"></label>
+        <label>TTL (秒)<input name="ttl" type="number" min="1" max="86400" value="{{.Form.TTL}}" placeholder="自动"></label>
+        <label>IP 版本
+          <select name="ipVersion" id="ipVersion">
+            <option value="4" {{if eq .Form.IPVersion "4"}}selected{{end}}>IPv4</option>
+            <option value="6" {{if eq .Form.IPVersion "6"}}selected{{end}}>IPv6</option>
+          </select>
+        </label>
+      </div>
+      <fieldset class="radio-grid" aria-label="获取方式">
+        <legend>获取方式</legend>
+        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="cmd" {{if eq .Form.GetType "cmd"}}checked{{end}}> 系统命令</span></label>
+        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="nic" {{if eq .Form.GetType "nic"}}checked{{end}}> 系统网卡</span></label>
+        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="url" {{if or (eq .Form.GetType "") (eq .Form.GetType "url")}}checked{{end}}> URL请求</span></label>
+        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="duid" {{if eq .Form.GetType "duid"}}checked{{end}}> DUID标识</span></label>
+      </fieldset>
+      <div class="method-help-panel"><span class="hint-icon">?</span><span data-method-help></span></div>
+      <div class="method-box" data-method="nic">
+        <label>本机网卡
+          <select name="getValue" data-nic-select>
+            <option value="">请选择本机网卡</option>
+            {{range .NICs}}
+            <option value="{{.Name}}" {{if eq $.Form.GetValue .Name}}selected{{end}}>{{.Name}} ({{join .IPs ", "}})</option>
+            {{end}}
+          </select>
+        </label>
+      </div>
+      <div class="method-box" data-method="url">
+        <label>URL 请求地址
+          <textarea name="getValue" rows="3" placeholder="留空时按 IP 版本使用预设值">{{if eq .Form.GetType "url"}}{{.Form.GetValue}}{{end}}</textarea>
+        </label>
+      </div>
+      <div class="method-box" data-method="cmd">
+        <label>系统命令<input name="getValue" value="{{if eq .Form.GetType "cmd"}}{{.Form.GetValue}}{{end}}" placeholder="ip addr show br-lan"></label>
+      </div>
+      <div class="method-box" data-method="duid">
+        <label>DUID<input name="getValue" value="{{if eq .Form.GetType "duid"}}{{.Form.GetValue}}{{end}}" placeholder="000300019009d009781d"></label>
+      </div>
+      <label>筛选规则
+        <input name="rule" value="{{.Form.Rule}}" placeholder="空值表示选择第一个公网 IP">
+        <span class="field-help"><span class="hint-icon">?</span>规则说明：空值选择第一个公网 IP；index@n 选择第 n 个；splice@n@后缀 使用第 n 个 IPv6 前缀拼接后缀；contain@substr 选择包含指定文本的第一个 IP。</span>
+      </label>
+      <div class="form-actions">
+        <a class="button" href="/">取消</a>
+        <button class="primary" type="submit">保存记录</button>
+      </div>
+    </form>
+  </main>
+  <script>
+    const radios = document.querySelectorAll('input[name="getType"]');
+    const boxes = document.querySelectorAll('.method-box');
+    const ipVersion = document.querySelector('#ipVersion');
+    const duidRadio = document.querySelector('input[name="getType"][value="duid"]');
+    const methodHelp = document.querySelector('[data-method-help]');
+    const helpText = {
+      cmd: '通过执行系统命令获取IP地址。',
+      nic: '选择系统网卡获取IP地址。',
+      url: '访问URL获取IP地址，多个URL使用英文逗号（,）分隔。',
+      duid: '读取 DHCPv6 唯一标识获取IP地址，只支持OpenWrt系统。'
+    };
+    function syncMethod() {
+      const selected = document.querySelector('input[name="getType"]:checked')?.value || 'url';
+      methodHelp.textContent = helpText[selected] || '';
+      const panel = methodHelp.closest('.method-help-panel');
+      const selectedLabel = document.querySelector(`input[name="getType"][value="${selected}"]`)?.closest('.method-option');
+      if (panel && selectedLabel) {
+        const panelRect = panel.getBoundingClientRect();
+        const labelRect = selectedLabel.getBoundingClientRect();
+        const arrowPosition = ((labelRect.left + labelRect.width / 2 - panelRect.left) / panelRect.width) * 100;
+        panel.style.setProperty('--help-arrow', `${arrowPosition}%`);
+      }
+      boxes.forEach(box => {
+        const active = box.dataset.method === selected;
+        box.hidden = !active;
+        box.querySelectorAll('input, textarea, select').forEach(input => input.disabled = !active);
+      });
+    }
+    function syncDuidAvailability() {
+      const ipv4 = ipVersion?.value === '4';
+      if (duidRadio) {
+        duidRadio.disabled = ipv4;
+        if (ipv4 && duidRadio.checked) {
+          const urlRadio = document.querySelector('input[name="getType"][value="url"]');
+          if (urlRadio) urlRadio.checked = true;
+        }
+      }
+      syncMethod();
+    }
+    radios.forEach(radio => radio.addEventListener('change', syncMethod));
+    ipVersion?.addEventListener('change', syncDuidAvailability);
+    syncDuidAvailability();
+  </script>
+</body>
+</html>
+{{end}}

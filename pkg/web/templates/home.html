@@ -1,0 +1,143 @@
+{{define "home.html"}}
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DDNS 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+
+<body>
+  <header class="topbar home-topbar">
+    <a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a>
+    <nav>
+      <a href="/">配置</a>
+      <a href="/logs">日志</a>
+      <a href="/password">修改密码</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <button class="ghost" type="submit">退出</button>
+      </form>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="page-title">
+      <div>
+        <h1>配置管理</h1>
+        <p>当前共 {{len .Config.Providers}} 个DDNS配置。保存会自动热加载。</p>
+      </div>
+      <a class="button primary" href="/providers/new">创建DDNS配置</a>
+    </section>
+
+    {{if .Config.Providers}}
+    <section class="provider-grid">
+      {{range $pIdx, $p := .Config.Providers}}
+      <article class="provider-card">
+        <header>
+          <div>
+            <h2>{{$p.Name}}</h2>
+            <span class="badge">{{providerLabel $p.Provider}}</span>
+          </div>
+          <div class="actions">
+            <a href="/providers/{{$pIdx}}/edit">编辑</a>
+            <form method="post" action="/providers/{{$pIdx}}/delete" onsubmit="return confirm('确定删除该服务商及其记录吗？')">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <button class="link danger" type="submit">删除</button>
+            </form>
+          </div>
+        </header>
+        <dl class="meta">
+          <div>
+            <dt>Key ID</dt>
+            <dd>{{mask $p.KeyID}}</dd>
+          </div>
+          <div>
+            <dt>强制刷新</dt>
+            <dd>{{durNumber $p.ForceInterval}} 分钟</dd>
+          </div>
+          <div>
+            <dt>记录数量</dt>
+            <dd>{{len $p.Records}}</dd>
+          </div>
+        </dl>
+        <div class="record-head">
+          <strong>解析记录</strong>
+          <a class="button small primary" href="/providers/{{$pIdx}}/records/new">新增记录</a>
+        </div>
+        {{if $p.Records}}
+        <div class="records">
+          {{range $rIdx, $r := $p.Records}}
+          <div class="record-row">
+            <strong class="record-title">{{$r.Name}}</strong>
+            <div class="record-line">
+              <span class="record-domains" title="{{join $r.SubDomains " , "}}"><span class="pill-text">{{join
+                  $r.SubDomains ", "}}</span></span>
+              <code class="record-value" title="{{$r.GetValue}}">{{compactValue $r.GetValue}}</code>
+              <div class="chips">
+                <span>IPv{{$r.IPVersion}}</span>
+                <span>{{$r.GetType}}</span>
+                <span>{{durNumber $r.Interval}}s</span>
+              </div>
+              <div class="actions compact">
+                <a href="/providers/{{$pIdx}}/records/{{$rIdx}}/edit">编辑</a>
+                <form method="post" action="/providers/{{$pIdx}}/records/{{$rIdx}}/delete"
+                  onsubmit="return confirm('确定删除这条记录吗？')">
+                  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                  <button class="link danger" type="submit">删除</button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <p class="empty">暂无解析记录。</p>
+        {{end}}
+      </article>
+      {{end}}
+    </section>
+    {{else}}
+    <section class="empty-panel">
+      <h2>还没有服务商配置</h2>
+      <p>先添加 DNS 服务商，再添加需要同步的域名记录。</p>
+      <a class="button primary" href="/providers/new">创建DDNS配置</a>
+    </section>
+    {{end}}
+
+    <section class="webhook-card">
+      <div>
+        <h2>Webhook</h2>
+        {{if .Config.Webhook.URL}}
+        <div class="webhook-item">
+          <span>URL</span>
+          <p>{{maskWebhook .Config.Webhook.URL}}</p>
+        </div>
+        {{if .Config.Webhook.Body}}
+        <div class="webhook-item">
+          <span>请求体</span>
+          <pre class="webhook-preview">{{.Config.Webhook.Body}}</pre>
+        </div>
+        {{end}}
+        {{if .Config.Webhook.Headers}}
+        <div class="webhook-item">
+          <span>请求头</span>
+          <pre class="webhook-preview">{{join .Config.Webhook.Headers "\n"}}</pre>
+        </div>
+        {{else}}
+        <span class="muted">未配置请求头</span>
+        {{end}}
+        {{else}}
+        <p class="muted">未配置通知地址，DNS 同步结果不会发送 Webhook。</p>
+        {{end}}
+      </div>
+      <a class="button primary" href="/webhook">配置 Webhook</a>
+    </section>
+  </main>
+</body>
+
+</html>
+{{end}}
