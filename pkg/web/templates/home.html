@@ -85,9 +85,9 @@
               </div>
               <div class="actions compact">
                 <a href="/providers/{{$pIdx}}/records/{{$rIdx}}/edit">编辑</a>
-                <form method="post" action="/providers/{{$pIdx}}/records/{{$rIdx}}/delete"
-                  onsubmit="return confirm('确定删除这条记录吗？')">
+                <form method="post" action="/providers/{{$pIdx}}/records/{{$rIdx}}/delete" data-delete-record>
                   <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="deleteCloud" value="false">
                   <button class="link danger" type="submit">删除</button>
                 </form>
               </div>
@@ -138,6 +138,43 @@
       <a class="button primary" href="/webhook">配置 Webhook</a>
     </section>
   </main>
+  <dialog class="delete-dialog" id="delete-record-dialog">
+    <form method="dialog">
+      <p class="dialog-eyebrow">删除解析记录</p>
+      <h2>要同时删除云端记录吗？</h2>
+      <p class="dialog-copy">本地配置删除后将停止同步。云端记录可以保留，也可以一并清理。</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="button">取消</button>
+        <button value="local" class="button">仅删除本地</button>
+        <button value="cloud" class="button primary">本地及云端</button>
+      </div>
+    </form>
+  </dialog>
+  <script>
+    (() => {
+      const dialog = document.querySelector('#delete-record-dialog');
+      if (!dialog) return;
+      let pendingForm;
+      document.querySelectorAll('[data-delete-record]').forEach(form => {
+        form.addEventListener('submit', event => {
+          if (form.dataset.confirmed === 'true') return;
+          event.preventDefault();
+          pendingForm = form;
+          dialog.showModal();
+        });
+      });
+      dialog.addEventListener('close', () => {
+        if (!pendingForm || (dialog.returnValue !== 'local' && dialog.returnValue !== 'cloud')) {
+          pendingForm = undefined;
+          return;
+        }
+        pendingForm.querySelector('[name="deleteCloud"]').value = dialog.returnValue === 'cloud' ? 'true' : 'false';
+        pendingForm.dataset.confirmed = 'true';
+        pendingForm.requestSubmit();
+        pendingForm = undefined;
+      });
+    })();
+  </script>
 </body>
 
 </html>

@@ -71,16 +71,23 @@ func main() {
 
 	}
 
-	engine := engine.NewEngine(configManager)
+	ddnsEngine := engine.NewEngine(configManager)
 
 	// 监听操作系统停止信号，ctr+c
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if *enableWeb {
-		go engine.Start(ctx)
+		go ddnsEngine.Start(ctx)
 
-		webServer, err := web.New(web.Options{ConfigPath: path, Reloader: configManager, Logs: log.DefaultBuffer})
+		webServer, err := web.New(web.Options{
+			ConfigPath: path,
+			Reloader:   configManager,
+			Logs:       log.DefaultBuffer,
+			CloudOperatorFactory: func(p config.Provider) (web.CloudOperator, error) {
+				return engine.NewOperator(p.Provider, p.KeyID, p.KeySecret)
+			},
+		})
 		if err != nil {
 			slog.Error("Web 控制台初始化失败", "error", err)
 			os.Exit(1)
@@ -101,7 +108,7 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		engine.Start(ctx)
+		ddnsEngine.Start(ctx)
 	}
 
 	slog.Info("程序已退出！！！")

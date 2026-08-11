@@ -42,6 +42,45 @@ p {
   color: var(--muted);
 }
 
+.delete-dialog {
+  width: min(440px, calc(100% - 32px));
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.delete-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.dialog-eyebrow {
+  margin-bottom: 8px;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.delete-dialog h2 {
+  margin-bottom: 8px;
+  font-size: 21px;
+}
+
+.dialog-copy {
+  margin-bottom: 22px;
+  color: var(--muted);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .topbar {
   position: relative;
   flex: 0 0 58px;

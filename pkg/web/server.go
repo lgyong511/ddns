@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -41,18 +42,27 @@ type Reloader interface {
 	Reload() error
 }
 
+type CloudOperator interface {
+	provider.Getter
+	provider.Deleter
+}
+
+type CloudOperatorFactory func(config.Provider) (CloudOperator, error)
+
 type Server struct {
-	configPath string
-	reloader   Reloader
-	logs       *ddnslog.Buffer
-	templates  *template.Template
-	sessions   *sessionStore
+	configPath           string
+	reloader             Reloader
+	logs                 *ddnslog.Buffer
+	templates            *template.Template
+	sessions             *sessionStore
+	cloudOperatorFactory CloudOperatorFactory
 }
 
 type Options struct {
-	ConfigPath string
-	Reloader   Reloader
-	Logs       *ddnslog.Buffer
+	ConfigPath           string
+	Reloader             Reloader
+	Logs                 *ddnslog.Buffer
+	CloudOperatorFactory CloudOperatorFactory
 }
 
 func New(options Options) (*Server, error) {
@@ -65,11 +75,12 @@ func New(options Options) (*Server, error) {
 		logs = ddnslog.DefaultBuffer
 	}
 	return &Server{
-		configPath: options.ConfigPath,
-		reloader:   options.Reloader,
-		logs:       logs,
-		templates:  tmpl,
-		sessions:   newSessionStore(),
+		configPath:           options.ConfigPath,
+		reloader:             options.Reloader,
+		logs:                 logs,
+		templates:            tmpl,
+		sessions:             newSessionStore(),
+		cloudOperatorFactory: options.CloudOperatorFactory,
 	}, nil
 }
 
@@ -476,14 +487,60 @@ func (s *Server) deleteRecord(pIdx, rIdx int) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		record := cfg.Providers[pIdx].Records[rIdx]
+		deleteCloud := r.FormValue("deleteCloud") == "true"
+		slog.Warn("开始删除解析记录", "provider", cfg.Providers[pIdx].Name, "providerType", cfg.Providers[pIdx].Provider, "record", record.Name, "subDomains", record.SubDomains, "deleteCloud", deleteCloud)
+		if deleteCloud {
+			if s.cloudOperatorFactory == nil {
+				slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "cloud", "err", "云端删除功能未配置")
+				s.renderError(w, r, errors.New("云端删除功能未配置"))
+				return
+			}
+			operator, err := s.cloudOperatorFactory(cfg.Providers[pIdx])
+			if err != nil {
+				slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "cloud_init", "err", err)
+				s.renderError(w, r, fmt.Errorf("初始化云端操作器失败: %w", err))
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			err = deleteCloudRecords(ctx, operator, record)
+			cancel()
+			if err != nil {
+				slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "cloud", "err", err)
+				s.renderError(w, r, err)
+				return
+			}
+		}
 		records := cfg.Providers[pIdx].Records
 		cfg.Providers[pIdx].Records = append(records[:rIdx], records[rIdx+1:]...)
 		if err := s.persist(&cfg); err != nil {
+			slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "local", "err", err)
 			s.renderError(w, r, err)
 			return
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
+}
+
+func deleteCloudRecords(ctx context.Context, operator CloudOperator, record config.Record) error {
+	for _, subDomain := range record.SubDomains {
+		cloudRecords, err := operator.GetSub(ctx, subDomain, record.IPVersion)
+		if errors.Is(err, provider.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("查询云端记录 %q 失败: %w", subDomain, err)
+		}
+		for _, cloudRecord := range cloudRecords {
+			if cloudRecord.Type != record.IPVersion.RecordType() {
+				continue
+			}
+			if err := operator.Delete(ctx, cloudRecord.RecordId, cloudRecord.DomainName); err != nil {
+				return fmt.Errorf("删除云端记录 %q 失败: %w", subDomain, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
