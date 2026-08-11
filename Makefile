@@ -5,13 +5,15 @@ CURRENT_DIR := $(CURDIR)
 BINARY_NAME=ddns
 MAIN_PATH=./cmd/ddns
 DOCKER_IMAGE_NAME=my-ddns-service:latest
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X ddns/pkg/version.Version=$(VERSION)
 
 all: build
 
 ## build: 本地编译当前架构的二进制
 build:
 	@echo "正在本地编译 $(BINARY_NAME)..."
-	go build -ldflags="-s -w" -o $(BINARY_NAME) $(MAIN_PATH)
+	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "编译完成！"
 
 ## run: 本地直接运行（默认读取根目录下的 conf.yaml）
@@ -35,5 +37,5 @@ docker-build:
 docker-run: docker-build
 	@echo "正在启动容器..."
 	docker run --rm -it \
-		-v $(CURRENT_DIR)/conf.yaml:/app/conf.yaml \
+		-v $(CURRENT_DIR)/conf.yaml:/app/config/conf.yaml \
 		$(DOCKER_IMAGE_NAME)

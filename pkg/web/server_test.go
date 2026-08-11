@@ -1,11 +1,21 @@
 package web
 
 import (
+	"ddns/pkg/version"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPageIncludesVersion(t *testing.T) {
+	server := &Server{}
+	page := server.page(&http.Request{}, "测试", nil)
+	if page["Version"] != version.Version {
+		t.Fatalf("page version = %v, want %q", page["Version"], version.Version)
+	}
+}
 
 func TestPrepareConfigFileImportsValidCandidate(t *testing.T) {
 	dir := t.TempDir()

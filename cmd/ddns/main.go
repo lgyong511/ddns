@@ -5,8 +5,10 @@ import (
 	"ddns/pkg/config"
 	"ddns/pkg/engine"
 	"ddns/pkg/log"
+	"ddns/pkg/version"
 	"ddns/pkg/web"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,7 +27,13 @@ func main() {
 	configPath := flag.String("c", "", "请输入配置文件路径")
 	enableWeb := flag.Bool("web", false, "是否启动 Web 控制台")
 	listenPort := flag.String("p", "8686", "Web 控制台监听端口")
+	showVersion := flag.Bool("version", false, "输出当前版本")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version.Version)
+		return
+	}
+	slog.Info("DDNS 程序启动", "version", version.Version)
 
 	exeDir, err := executableDir()
 	if err != nil {

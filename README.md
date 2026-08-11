@@ -62,6 +62,8 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 
 **说明：若不使用网卡获取IP地址，请去除 `--net=host`**
 
+镜像默认启动 Web 控制台，监听 `8686` 端口。使用 `--net=host` 时可直接访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。
+
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
@@ -72,6 +74,8 @@ docker run -d --name ddns --restart always \
 #### 运行 OpenWrt 版
 
 **说明：如果要使用 DUID 获取 IPv6 地址需要挂载 ubus，不需要时可不挂载**
+
+镜像默认启动 Web 控制台，监听 `8686` 端口。使用 `--net=host` 时可直接访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。
 
 ```bash
 docker run -d --name ddns --restart always \
@@ -95,6 +99,12 @@ go build -o ddns ./cmd/ddns
 
 ```bash
 make build
+```
+
+在 Git tag 上执行 `make build` 时，版本号会自动使用当前 tag；非 tag 构建默认使用 `dev`。也可以通过 `VERSION` 手动指定版本：
+
+```bash
+VERSION=v1.6.0 make build
 ```
 
 ### 5. 准备配置文件
@@ -218,6 +228,18 @@ providers:
 ./ddns
 ```
 
+程序启动时会在日志中输出当前版本。也可以使用 `-version` 只查看版本号并退出：
+
+```bash
+./ddns -version
+```
+
+输出示例：
+
+```text
+v1.6.0
+```
+
 如果配置文件不在默认路径，可以通过参数指定：
 
 ```bash
@@ -232,7 +254,7 @@ make run
 
 ## Web 控制台
 
-程序支持通过 Web 控制台管理 DDNS 配置。控制台可以创建、编辑和删除 DNS 服务商及解析记录，配置 Webhook，查看运行日志，以及修改登录密码。
+程序支持通过 Web 控制台管理 DDNS 配置。控制台可以创建、编辑和删除 DNS 服务商及解析记录，配置 Webhook，查看运行日志，以及修改登录密码。登录后的页面顶部菜单栏会显示当前程序版本。
 
 ### 启动 Web 控制台
 
@@ -267,17 +289,16 @@ Web 模式使用用户目录下的 `.ddns_conf.yaml` 保存配置：
 
 ### Docker 使用 Web 控制台
 
-容器中可以覆盖默认启动命令，并将 Web 配置文件所在的用户目录持久化：
+Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启动命令：
 
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
   -v /app/:/app/config/ \
-  -v /app/ddns-home/:/root/ \
-  --entrypoint /app/bin/ddns \
-  ghcr.io/lgyong511/ddns:latest \
-  -web -c /app/config/conf.yaml -p 8686
+  ghcr.io/lgyong511/ddns:latest
 ```
+
+Web 页面保存的配置默认位于容器内 `/root/.ddns_conf.yaml`；如需持久化，请额外挂载容器用户目录。
 
 Web 控制台默认监听所有网卡。部署在公网或局域网环境时，请通过防火墙、反向代理或其他访问控制措施限制访问，并妥善保管登录密码和 DNS 服务商密钥。
 

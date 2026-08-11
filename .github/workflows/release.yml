@@ -46,9 +46,10 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
         run: |
           mkdir -p dist
-          go build -ldflags="-s -w" -o dist/${{ matrix.name }} ./cmd/ddns
+          go build -ldflags="-s -w -X ddns/pkg/version.Version=${VERSION}" -o dist/${{ matrix.name }} ./cmd/ddns
 
       # 使用 artifact 暂存二进制产物，避免 matrix 并发上传 Release 产生竞争
       - name: Upload artifact
@@ -109,6 +110,7 @@ jobs:
           target: generic
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/${{ env.OWNER }}/ddns:${{ github.ref_name }}
             ghcr.io/${{ env.OWNER }}/ddns:latest
@@ -142,6 +144,7 @@ jobs:
           target: openwrt
           push: true
           platforms: linux/amd64
+          build-args: VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/${{ env.OWNER }}/ddns:${{ github.ref_name }}-openwrt
             ghcr.io/${{ env.OWNER }}/ddns:latest-openwrt

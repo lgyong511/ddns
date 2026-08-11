@@ -21,6 +21,7 @@ import (
 	"ddns/pkg/config"
 	ddnslog "ddns/pkg/log"
 	"ddns/pkg/provider"
+	"ddns/pkg/version"
 
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/crypto/bcrypt"
@@ -585,6 +586,7 @@ func (s *Server) page(r *http.Request, title string, data map[string]any) map[st
 		data = map[string]any{}
 	}
 	data["Title"] = title
+	data["Version"] = version.Version
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
 		if csrf, ok := s.sessions.csrf(cookie.Value); ok {
 			data["CSRF"] = csrf

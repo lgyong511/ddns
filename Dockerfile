@@ -3,6 +3,7 @@ FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine3.24 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION=dev
 
 WORKDIR /build
 
@@ -10,7 +11,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o ddns ./cmd/ddns
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X ddns/pkg/version.Version=${VERSION}" -o ddns ./cmd/ddns
 
 
 # ==================== 阶段二：Alpine 通用版底座 ====================
@@ -33,7 +34,8 @@ WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
 RUN chmod +x /app/bin/ddns
 VOLUME ["/app/config"]
-ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml"]
+EXPOSE 8686
+ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml", "-web", "-p", "8686"]
 
 # 4b. 最终打包：软路由专用版（由于 Actions 矩阵已改，实际仅构建 amd64）
 FROM base-openwrt AS openwrt
@@ -41,7 +43,8 @@ WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
 RUN chmod +x /app/bin/ddns
 VOLUME ["/app/config"]
-ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml"]
+EXPOSE 8686
+ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml", "-web", "-p", "8686"]
 
 
 # ==============================================================================
