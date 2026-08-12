@@ -29,12 +29,18 @@ func GetAllNic() (map[string][]netip.Addr, error) {
 		}
 
 		var ips []netip.Addr
+		var rawIP net.IP
 		for _, addr := range addrs {
-			ipNet, ok := addr.(*net.IPNet)
-			if !ok {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				rawIP = v.IP
+			case *net.IPAddr:
+				rawIP = v.IP
+			default:
 				continue
 			}
-			ip, err := netip.ParseAddr(ipNet.IP.String())
+
+			ip, err := netip.ParseAddr(rawIP.String())
 			if err != nil {
 				continue
 			}
