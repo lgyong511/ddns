@@ -69,8 +69,14 @@ func (u *Url) Fetch(ctx context.Context) ([]netip.Addr, error) {
 				return
 			}
 			defer resp.Body.Close()
+			// 检查HTTP响应状态码
+			if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+				resultCh <- result{nil, fmt.Errorf("URL Fetcher: HTTP请求失败，状态码: %d", resp.StatusCode)}
+				return
+			}
 
-			body, err := io.ReadAll(resp.Body)
+			// 读取响应体，限制最大读取1MB
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			if err != nil {
 				resultCh <- result{nil, err}
 				return
