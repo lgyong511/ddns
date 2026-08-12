@@ -35,7 +35,20 @@ func IsIPv6(addr netip.Addr) bool {
 
 // IsPublic 是否公网IP地址的过滤函数
 func IsPublic(addr netip.Addr) bool {
-	return addr.IsValid() && !addr.IsPrivate() && !addr.IsLoopback() && !addr.IsLinkLocalUnicast() && !addr.IsLinkLocalMulticast()
+	if !addr.IsValid() {
+		return false
+	}
+
+	if !addr.IsGlobalUnicast() {
+		return false
+	}
+	var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+	// IPv4 CGNAT
+	if addr.Is4() && cgnatPrefix.Contains(addr) {
+		return false
+	}
+
+	return true
 }
 
 // Contains 是否包含substr字符串IP地址的过滤函数
