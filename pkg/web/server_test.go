@@ -5,7 +5,9 @@ import (
 	"ddns/pkg/config"
 	"ddns/pkg/provider"
 	"ddns/pkg/version"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,5 +93,51 @@ func TestDeleteCloudRecordsFiltersRecordType(t *testing.T) {
 	}
 	if len(operator.deleted) != 1 || operator.deleted[0] != "a-record@example.com" {
 		t.Fatalf("deleted records = %v, want [a-record@example.com]", operator.deleted)
+	}
+}
+
+func TestParseProviderRecordsRejectsMismatchedFields(t *testing.T) {
+	form := url.Values{
+		"recordName":       {"nas"},
+		"recordSubDomains": {"nas.example.com"},
+		"recordIPVersion":  {"4"},
+		"recordTTL":        {"600"},
+		"recordInterval":   {"30"},
+		"recordGetType0":   {"url"},
+		"recordGetValue":   {},
+		"recordRule":       {""},
+	}
+	request := &http.Request{Form: form}
+
+	if _, err := parseProviderRecords(request); err == nil {
+		t.Fatal("parseProviderRecords accepted a missing recordGetValue field")
+	} else if !strings.Contains(err.Error(), "recordGetValue") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseProviderRecordsRejectsEveryMismatchedField(t *testing.T) {
+	fieldNames := []string{"recordSubDomains", "recordIPVersion", "recordTTL", "recordInterval", "recordGetValue", "recordRule"}
+	for _, fieldName := range fieldNames {
+		t.Run(fieldName, func(t *testing.T) {
+			form := url.Values{
+				"recordName":       {"nas"},
+				"recordSubDomains": {"nas.example.com"},
+				"recordIPVersion":  {"4"},
+				"recordTTL":        {"600"},
+				"recordInterval":   {"30"},
+				"recordGetType0":   {"url"},
+				"recordGetValue":   {"https://example.com"},
+				"recordRule":       {""},
+			}
+			form.Del(fieldName)
+			request := &http.Request{Form: form}
+
+			if _, err := parseProviderRecords(request); err == nil {
+				t.Fatalf("parseProviderRecords accepted missing %s", fieldName)
+			} else if !strings.Contains(err.Error(), fmt.Sprintf("字段 %s", fieldName)) {
+				t.Fatalf("unexpected error for %s: %v", fieldName, err)
+			}
+		})
 	}
 }

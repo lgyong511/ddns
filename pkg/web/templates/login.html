@@ -15,8 +15,8 @@
     <p class="muted">登录后管理解析服务商、记录和 Webhook。</p>
     {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
     <form method="post" action="/login">
-      <label>账号<input name="username" autocomplete="username" required autofocus></label>
-      <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+      <label>账号<input name="username" maxlength="64" autocomplete="username" required autofocus></label>
+      <label>密码<input name="password" type="password" maxlength="72" autocomplete="current-password" required></label>
       <button class="primary" type="submit">登录</button>
     </form>
   </main>

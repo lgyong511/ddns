@@ -9,6 +9,29 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+	"golang.org/x/net/idna"
+)
+
+const (
+	MaxProviderNameBytes   = 64
+	MaxProviderTypeBytes   = 32
+	MaxRecordNameBytes     = 64
+	MaxAccessKeyBytes      = 256
+	MaxURLBytes            = 2048
+	MaxCommandBytes        = 4096
+	MaxNICBytes            = 256
+	MaxDUIDBytes           = 128
+	MaxRuleBytes           = 512
+	MaxGetTypeBytes        = 16
+	MaxDomainBytes         = 253
+	MaxDomainLabelBytes    = 63
+	MaxWebhookURLBytes     = 2048
+	MaxWebhookBodyBytes    = 64 * 1024
+	MaxWebhookHeaderBytes  = 1024
+	MaxWebhookHeadersBytes = 8 * 1024
+	MaxUsernameBytes       = 64
+	MaxPasswordBytes       = 72
+	MaxPasswordHashBytes   = 128
 )
 
 // Config 代表整个 YAML 文件的根结构
@@ -171,8 +194,17 @@ func (c *Config) Validate() error {
 		if p.Name == "" {
 			errs = append(errs, fmt.Errorf("providers[%d].name 不能为空", i))
 		}
+		if err := validateByteLength("providers["+strconv.Itoa(i)+"].name", p.Name, MaxProviderNameBytes); err != nil {
+			errs = append(errs, err)
+		}
 		if p.KeyID == "" {
 			errs = append(errs, fmt.Errorf("providers[%d].KeyID  不能为空", i))
+		}
+		if err := validateByteLength("providers["+strconv.Itoa(i)+"].keyId", p.KeyID, MaxAccessKeyBytes); err != nil {
+			errs = append(errs, err)
+		}
+		if err := validateByteLength("providers["+strconv.Itoa(i)+"].keySecret", p.KeySecret, MaxAccessKeyBytes); err != nil {
+			errs = append(errs, err)
 		}
 		if p.KeySecret == "" {
 			errs = append(errs, fmt.Errorf("providers[%d].keySecret 不能为空", i))
@@ -180,6 +212,9 @@ func (c *Config) Validate() error {
 		}
 		if p.Provider == "" {
 			errs = append(errs, fmt.Errorf("providers[%d].provider 不能为空", i))
+		}
+		if err := validateByteLength("providers["+strconv.Itoa(i)+"].provider", p.Provider, MaxProviderTypeBytes); err != nil {
+			errs = append(errs, err)
 		}
 
 		// 检查provider是否重名
@@ -195,14 +230,31 @@ func (c *Config) Validate() error {
 			if r.Name == "" {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].name 不能为空", p.Name, j))
 			}
+			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].name", r.Name, MaxRecordNameBytes); err != nil {
+				errs = append(errs, err)
+			}
 			if r.GetType == "" {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 不能为空", p.Name, j))
+			}
+			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].getType", r.GetType, MaxGetTypeBytes); err != nil {
+				errs = append(errs, err)
 			}
 			if r.GetValue == "" {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getValue 不能为空", p.Name, j))
 			}
 			if len(r.SubDomains) == 0 {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains 不能为空", p.Name, j))
+			}
+			for _, subDomain := range r.SubDomains {
+				if err := validateDomainName(subDomain); err != nil {
+					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains: %w", p.Name, j, err))
+				}
+			}
+			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].getValue", r.GetValue, maxGetValueBytes(r.GetType)); err != nil {
+				errs = append(errs, err)
+			}
+			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].rule", r.Rule, MaxRuleBytes); err != nil {
+				errs = append(errs, err)
 			}
 			if r.IPVersion != provider.IPv4 && r.IPVersion != provider.IPv6 {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ipVersion 无效，请填写 4 或 6", p.Name, j))
@@ -215,9 +267,73 @@ func (c *Config) Validate() error {
 			recordNames[r.Name] = true
 		}
 	}
+	if err := validateByteLength("webhook.url", c.Webhook.URL, MaxWebhookURLBytes); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateByteLength("webhook.body", c.Webhook.Body, MaxWebhookBodyBytes); err != nil {
+		errs = append(errs, err)
+	}
+	totalHeaderBytes := 0
+	for i, header := range c.Webhook.Headers {
+		if err := validateByteLength("webhook.headers["+strconv.Itoa(i)+"]", header, MaxWebhookHeaderBytes); err != nil {
+			errs = append(errs, err)
+		}
+		totalHeaderBytes += len(header)
+	}
+	if totalHeaderBytes > MaxWebhookHeadersBytes {
+		errs = append(errs, fmt.Errorf("webhook.headers 总长度不能超过 %d 字节", MaxWebhookHeadersBytes))
+	}
+	if err := validateByteLength("auth.username", c.Auth.Username, MaxUsernameBytes); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateByteLength("auth.passwordHash", c.Auth.PasswordHash, MaxPasswordHashBytes); err != nil {
+		errs = append(errs, err)
+	}
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func validateByteLength(field, value string, max int) error {
+	if len(value) > max {
+		return fmt.Errorf("%s 长度不能超过 %d 字节", field, max)
+	}
+	return nil
+}
+
+func maxGetValueBytes(getType string) int {
+	switch getType {
+	case "url":
+		return MaxURLBytes
+	case "cmd":
+		return MaxCommandBytes
+	case "nic":
+		return MaxNICBytes
+	case "duid":
+		return MaxDUIDBytes
+	default:
+		return MaxCommandBytes
+	}
+}
+
+func validateDomainName(value string) error {
+	value = strings.TrimSuffix(strings.TrimSpace(value), ".")
+	if value == "" {
+		return errors.New("域名不能为空")
+	}
+	asciiName, err := idna.Lookup.ToASCII(value)
+	if err != nil {
+		return fmt.Errorf("域名格式无效")
+	}
+	if len(asciiName) > MaxDomainBytes {
+		return fmt.Errorf("域名长度不能超过 %d 字节", MaxDomainBytes)
+	}
+	for _, label := range strings.Split(asciiName, ".") {
+		if len(label) == 0 || len(label) > MaxDomainLabelBytes {
+			return fmt.Errorf("域名标签长度不能超过 %d 字节", MaxDomainLabelBytes)
+		}
 	}
 	return nil
 }

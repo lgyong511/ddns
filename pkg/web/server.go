@@ -58,6 +58,8 @@ type Server struct {
 	cloudOperatorFactory CloudOperatorFactory
 }
 
+const maxRequestBodyBytes = 1 << 20
+
 type Options struct {
 	ConfigPath           string
 	Reloader             Reloader
@@ -118,6 +120,13 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "请求体超过 1 MiB 限制", http.StatusRequestEntityTooLarge)
+			return
+		}
+	}
 	path := strings.Trim(r.URL.Path, "/")
 	parts := splitPath(path)
 
@@ -188,6 +197,10 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	confirm := r.FormValue("confirm")
 	if username == "" || password == "" || password != confirm {
 		s.render(w, "setup.html", map[string]any{"Title": "首次设置", "Error": "账号不能为空，且两次密码必须一致"})
+		return
+	}
+	if len(username) > config.MaxUsernameBytes || len(password) > config.MaxPasswordBytes || len(confirm) > config.MaxPasswordBytes {
+		s.render(w, "setup.html", map[string]any{"Title": "首次设置", "Error": "账号最多 64 字节，密码最多 72 字节"})
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -273,6 +286,10 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	oldPassword := r.FormValue("oldPassword")
 	newPassword := r.FormValue("newPassword")
 	confirm := r.FormValue("confirm")
+	if len(newPassword) > config.MaxPasswordBytes {
+		s.render(w, "password_form.html", s.page(r, "修改密码", map[string]any{"Error": "新密码最多 72 字节"}))
+		return
+	}
 	if bcrypt.CompareHashAndPassword([]byte(cfg.Auth.PasswordHash), []byte(oldPassword)) != nil {
 		s.render(w, "password_form.html", s.page(r, "修改密码", map[string]any{"Error": "旧密码不正确"}))
 		return
@@ -789,6 +806,19 @@ func parseProviderRecords(r *http.Request) ([]config.Record, error) {
 	names := r.Form["recordName"]
 	if len(names) == 0 {
 		return nil, nil
+	}
+	fields := map[string][]string{
+		"recordSubDomains": r.Form["recordSubDomains"],
+		"recordIPVersion":  r.Form["recordIPVersion"],
+		"recordTTL":        r.Form["recordTTL"],
+		"recordInterval":   r.Form["recordInterval"],
+		"recordGetValue":   r.Form["recordGetValue"],
+		"recordRule":       r.Form["recordRule"],
+	}
+	for name, values := range fields {
+		if len(values) < len(names) {
+			return nil, fmt.Errorf("表单字段 %s 数量无效", name)
+		}
 	}
 	records := make([]config.Record, 0, len(names))
 	for i := range names {

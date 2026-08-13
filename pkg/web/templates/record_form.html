@@ -16,8 +16,8 @@
     <form class="panel" method="post" action="{{.Action}}">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <div class="form-row two">
-        <label>记录名称<input name="name" value="{{.Form.Name}}" required placeholder="如 nas_ipv6"></label>
-        <label>子域名<input name="subDomains" value="{{.Form.SubDomains}}" required placeholder="nas.example.com, home.example.com"></label>
+        <label>记录名称<input name="name" maxlength="64" value="{{.Form.Name}}" required placeholder="如 nas_ipv6"></label>
+        <label>子域名<input name="subDomains" maxlength="4096" value="{{.Form.SubDomains}}" required placeholder="nas.example.com, home.example.com"></label>
       </div>
       <div class="form-row three">
         <label>检测间隔 (秒)<input name="interval" type="number" min="10" max="60" value="{{.Form.Interval}}" placeholder="自动"></label>
@@ -48,18 +48,18 @@
         </label>
       </div>
       <div class="method-box" data-method="url">
-        <label>URL 请求地址
-          <textarea name="getValue" rows="3" placeholder="留空时按 IP 版本使用预设值">{{if eq .Form.GetType "url"}}{{.Form.GetValue}}{{end}}</textarea>
+          <label>URL 请求地址
+          <textarea name="getValue" maxlength="2048" rows="3" placeholder="留空时按 IP 版本使用预设值">{{if eq .Form.GetType "url"}}{{.Form.GetValue}}{{end}}</textarea>
         </label>
       </div>
       <div class="method-box" data-method="cmd">
-        <label>系统命令<input name="getValue" value="{{if eq .Form.GetType "cmd"}}{{.Form.GetValue}}{{end}}" placeholder="ip addr show br-lan"></label>
+        <label>系统命令<input name="getValue" maxlength="4096" value="{{if eq .Form.GetType "cmd"}}{{.Form.GetValue}}{{end}}" placeholder="ip addr show br-lan"></label>
       </div>
       <div class="method-box" data-method="duid">
-        <label>DUID<input name="getValue" value="{{if eq .Form.GetType "duid"}}{{.Form.GetValue}}{{end}}" placeholder="000300019009d009781d"></label>
+        <label>DUID<input name="getValue" maxlength="128" value="{{if eq .Form.GetType "duid"}}{{.Form.GetValue}}{{end}}" placeholder="000300019009d009781d"></label>
       </div>
       <label>筛选规则
-        <input name="rule" value="{{.Form.Rule}}" placeholder="空值表示选择第一个公网 IP">
+        <input name="rule" maxlength="512" value="{{.Form.Rule}}" placeholder="空值表示选择第一个公网 IP">
         <span class="field-help"><span class="hint-icon">?</span>规则说明：空值选择第一个公网 IP；index@n 选择第 n 个；splice@n@后缀 使用第 n 个 IPv6 前缀拼接后缀；contain@substr 选择包含指定文本的第一个 IP。</span>
       </label>
       <div class="form-actions">
