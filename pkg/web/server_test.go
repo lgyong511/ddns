@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeCloudOperator struct {
@@ -128,6 +129,41 @@ func TestConfigReadErrorsAreReturned(t *testing.T) {
 				t.Fatalf("handler entered an initialization or login flow: %s", response.Body.String())
 			}
 		})
+	}
+}
+
+func TestLoginLimiterLocksAndBacksOff(t *testing.T) {
+	limiter := newLoginLimiter()
+	key := "192.0.2.1"
+	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
+
+	for attempt := 1; attempt < loginFailureThreshold; attempt++ {
+		if _, locked := limiter.failure(key, now); locked {
+			t.Fatalf("attempt %d unexpectedly locked the client", attempt)
+		}
+	}
+	lockDuration, locked := limiter.failure(key, now)
+	if !locked || lockDuration != loginInitialLock {
+		t.Fatalf("first lock = (%v, %v), want (%v, true)", lockDuration, locked, loginInitialLock)
+	}
+	if retryAfter, locked := limiter.check(key, now.Add(loginInitialLock-time.Second)); !locked || retryAfter != time.Second {
+		t.Fatalf("active lock = (%v, %v), want (1s, true)", retryAfter, locked)
+	}
+
+	nextAttempt := now.Add(loginInitialLock)
+	for attempt := 1; attempt < loginFailureThreshold; attempt++ {
+		if _, locked := limiter.failure(key, nextAttempt); locked {
+			t.Fatalf("backoff attempt %d unexpectedly locked the client", attempt)
+		}
+	}
+	lockDuration, locked = limiter.failure(key, nextAttempt)
+	if !locked || lockDuration != 2*loginInitialLock {
+		t.Fatalf("second lock = (%v, %v), want (%v, true)", lockDuration, locked, 2*loginInitialLock)
+	}
+
+	limiter.success(key)
+	if _, locked := limiter.check(key, nextAttempt); locked {
+		t.Fatal("successful login did not clear the client limiter state")
 	}
 }
 

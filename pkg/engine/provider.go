@@ -76,7 +76,7 @@ func (p *Provider) watchRecord(ctx context.Context, record *config.Record) {
 	}
 
 	//新建定时器
-	ticker := time.NewTicker(record.Interval * time.Second)
+	ticker := time.NewTicker(time.Duration(record.Interval) * time.Second)
 	defer ticker.Stop()
 
 	//死循环监听ctx和定时器
@@ -125,7 +125,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 		//判断是否需要更新和计算剩余强制和DNS服务商对齐时间
 		needSync, nextForceSyncIn := recordState.ShouldSync(subDomain, currentAddr)
 		if !needSync {
-			msg := fmt.Sprintf("IP 未变，将%v秒后重获IP", record.Interval*time.Second)
+			msg := fmt.Sprintf("IP 未变，将%v秒后重获IP", record.Interval)
 			logger.Info(msg,
 				"subDomain", subDomain,
 				"IP", currentAddr,

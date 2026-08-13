@@ -126,7 +126,7 @@ func (r *RecordState) GetCache(subDomain string) (SubDomainInfo, bool) {
 // IncFailCount 同步失败状态处理
 // 参数：子域名和最大与DNS API同步时间
 // 返回：失败次数和重试时间
-func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes time.Duration) (int, time.Duration) {
+func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes int64) (int, time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	info := r.cacheSubDomain[SubDomain]
@@ -137,7 +137,7 @@ func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes time.Dur
 
 	//计算下次重试时间，以30秒为基准。
 	nextGap := time.Duration(info.FailCount) * 30 * time.Second
-	maxInterval := maxIntervalMinutes * time.Minute
+	maxInterval := time.Duration(maxIntervalMinutes) * time.Minute
 	//最长不能大于最大同步时间
 	if nextGap > maxInterval {
 		nextGap = maxInterval
@@ -150,13 +150,13 @@ func (r *RecordState) IncFailCount(SubDomain string, maxIntervalMinutes time.Dur
 }
 
 // UpdateCache 记录同步成功后的更新缓存
-func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr, maxForceMinutes time.Duration) time.Duration {
+func (r *RecordState) UpdateCache(subDomain string, currentAddr netip.Addr, maxForceMinutes int64) time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	oldCache, exists := r.cacheSubDomain[subDomain]
 	baseInterval := 1 * time.Minute
-	maxInterval := maxForceMinutes * time.Minute
+	maxInterval := time.Duration(maxForceMinutes) * time.Minute
 	var nextInterval time.Duration
 
 	if !exists || oldCache.Addr != currentAddr {

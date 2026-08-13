@@ -9,6 +9,53 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+func TestDurationFieldsUnmarshalAsUnitIntegers(t *testing.T) {
+	var cfg Config
+	data := []byte(`
+providers:
+  - name: home
+    provider: aliyun
+    keyId: id
+    keySecret: secret
+    forceInterval: 5
+    records:
+      - name: nas
+        subDomains: [nas.example.com]
+        ipVersion: 4
+        ttl: 600
+        getType: url
+        getValue: https://example.com
+        interval: 30
+`)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers[0].ForceInterval; got != 5 {
+		t.Fatalf("force interval = %d, want 5 minutes", got)
+	}
+	if got := cfg.Providers[0].Records[0].Interval; got != 30 {
+		t.Fatalf("record interval = %d, want 30 seconds", got)
+	}
+}
+
+func TestDurationFieldsRejectUnitStrings(t *testing.T) {
+	var cfg Config
+	data := []byte(`
+providers:
+  - name: home
+    provider: aliyun
+    keyId: id
+    keySecret: secret
+    forceInterval: 5m
+    records:
+      - name: nas
+        interval: 30s
+`)
+	if err := yaml.Unmarshal(data, &cfg); err == nil {
+		t.Fatal("unit-suffixed duration should be rejected")
+	}
+}
+
 func TestDurationFieldsMarshalAsNumbers(t *testing.T) {
 	cfg := Config{Providers: []Provider{{
 		Name: "home", Provider: "aliyun", KeyID: "id", KeySecret: "secret", ForceInterval: 5,

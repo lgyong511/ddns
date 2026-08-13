@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,6 +56,7 @@ type Server struct {
 	logs                 *ddnslog.Buffer
 	templates            *template.Template
 	sessions             *sessionStore
+	loginLimit           *loginLimiter
 	cloudOperatorFactory CloudOperatorFactory
 }
 
@@ -82,6 +84,7 @@ func New(options Options) (*Server, error) {
 		logs:                 logs,
 		templates:            tmpl,
 		sessions:             newSessionStore(),
+		loginLimit:           newLoginLimiter(),
 		cloudOperatorFactory: options.CloudOperatorFactory,
 	}, nil
 }
@@ -239,13 +242,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	clientKey := loginClientKey(r)
+	if retryAfter, ok := s.loginLimit.check(clientKey, time.Now()); ok {
+		setRetryAfter(w, retryAfter)
+		http.Error(w, "登录失败次数过多，请稍后重试", http.StatusTooManyRequests)
+		return
+	}
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	if subtle.ConstantTimeCompare([]byte(username), []byte(cfg.Auth.Username)) != 1 ||
 		bcrypt.CompareHashAndPassword([]byte(cfg.Auth.PasswordHash), []byte(password)) != nil {
+		if retryAfter, locked := s.loginLimit.failure(clientKey, time.Now()); locked {
+			setRetryAfter(w, retryAfter)
+			http.Error(w, "登录失败次数过多，请稍后重试", http.StatusTooManyRequests)
+			return
+		}
 		s.render(w, "login.html", map[string]any{"Title": "登录", "Error": "账号或密码错误"})
 		return
 	}
+	s.loginLimit.success(clientKey)
 	token, csrf, err := s.sessions.create()
 	if err != nil {
 		http.Error(w, "无法创建会话", http.StatusInternalServerError)
@@ -858,7 +873,7 @@ func parseProviderRecords(r *http.Request) ([]config.Record, error) {
 }
 
 func parseProvider(r *http.Request) (config.Provider, error) {
-	forceInterval := parseDurationDefault(r.FormValue("forceInterval"), 5)
+	forceInterval := int64(parseIntDefault(r.FormValue("forceInterval"), 5))
 	p := config.Provider{
 		Name: strings.TrimSpace(r.FormValue("name")), Provider: strings.TrimSpace(r.FormValue("provider")),
 		KeyID: strings.TrimSpace(r.FormValue("keyId")), KeySecret: strings.TrimSpace(r.FormValue("keySecret")),
@@ -895,7 +910,7 @@ func parseRecord(r *http.Request) (config.Record, error) {
 func parseRecordForm(form recordForm) (config.Record, error) {
 	ipVersion := provider.Version(parseIntDefault(form.IPVersion, 4))
 	ttl := int64(parseIntDefault(form.TTL, 600))
-	interval := parseDurationDefault(form.Interval, 30)
+	interval := int64(parseIntDefault(form.Interval, 30))
 	getType := strings.TrimSpace(form.GetType)
 	getValue := strings.TrimSpace(form.GetValue)
 	if getType == "url" && getValue == "" {
@@ -1027,10 +1042,6 @@ func parseIntDefault(raw string, fallback int) int {
 	return value
 }
 
-func parseDurationDefault(raw string, fallback int64) time.Duration {
-	return time.Duration(parseIntDefault(raw, int(fallback)))
-}
-
 func randomToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
@@ -1047,6 +1058,86 @@ type session struct {
 type sessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]session
+}
+
+const (
+	loginFailureThreshold = 5
+	loginInitialLock      = 15 * time.Minute
+	loginMaxLock          = 24 * time.Hour
+)
+
+type loginAttempt struct {
+	failures    int
+	lockLevel   int
+	lockedUntil time.Time
+}
+
+type loginLimiter struct {
+	mu       sync.Mutex
+	attempts map[string]loginAttempt
+}
+
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{attempts: make(map[string]loginAttempt)}
+}
+
+func (l *loginLimiter) check(key string, now time.Time) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	attempt, ok := l.attempts[key]
+	if !ok || !now.Before(attempt.lockedUntil) {
+		return 0, false
+	}
+	return attempt.lockedUntil.Sub(now), true
+}
+
+func (l *loginLimiter) failure(key string, now time.Time) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	attempt := l.attempts[key]
+	if now.Before(attempt.lockedUntil) {
+		return attempt.lockedUntil.Sub(now), true
+	}
+	attempt.failures++
+	if attempt.failures < loginFailureThreshold {
+		l.attempts[key] = attempt
+		return 0, false
+	}
+	lockDuration := loginInitialLock
+	for level := 0; level < attempt.lockLevel; level++ {
+		if lockDuration >= loginMaxLock/2 {
+			lockDuration = loginMaxLock
+			break
+		}
+		lockDuration *= 2
+	}
+	attempt.failures = 0
+	attempt.lockLevel++
+	attempt.lockedUntil = now.Add(lockDuration)
+	l.attempts[key] = attempt
+	return lockDuration, true
+}
+
+func (l *loginLimiter) success(key string) {
+	l.mu.Lock()
+	delete(l.attempts, key)
+	l.mu.Unlock()
+}
+
+func loginClientKey(r *http.Request) string {
+	client := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(client); err == nil {
+		return host
+	}
+	return client
+}
+
+func setRetryAfter(w http.ResponseWriter, duration time.Duration) {
+	seconds := int(duration.Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
 }
 
 func newSessionStore() *sessionStore {

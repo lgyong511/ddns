@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/net/idna"
@@ -64,7 +63,7 @@ type Provider struct {
 	// 记录列表
 	Records []Record `yaml:"records" mapstructure:"records"`
 	// 强制同步时间，单位分钟
-	ForceInterval time.Duration `yaml:"forceInterval" mapstructure:"forceInterval"`
+	ForceInterval int64 `yaml:"forceInterval" mapstructure:"forceInterval"`
 }
 
 func (p Provider) MarshalYAML() (any, error) {
@@ -84,24 +83,20 @@ func (p Provider) MarshalYAML() (any, error) {
 
 func (p *Provider) UnmarshalYAML(value *yaml.Node) error {
 	type providerYAML struct {
-		Name          string    `yaml:"name"`
-		Provider      string    `yaml:"provider"`
-		KeyID         string    `yaml:"keyId"`
-		KeySecret     string    `yaml:"keySecret"`
-		Records       []Record  `yaml:"records"`
-		ForceInterval yaml.Node `yaml:"forceInterval"`
+		Name          string   `yaml:"name"`
+		Provider      string   `yaml:"provider"`
+		KeyID         string   `yaml:"keyId"`
+		KeySecret     string   `yaml:"keySecret"`
+		Records       []Record `yaml:"records"`
+		ForceInterval int64    `yaml:"forceInterval"`
 	}
 	var raw providerYAML
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	forceInterval, err := durationFromYAML(raw.ForceInterval, 0)
-	if err != nil {
-		return err
-	}
 	*p = Provider{
 		Name: raw.Name, Provider: raw.Provider, KeyID: raw.KeyID, KeySecret: raw.KeySecret,
-		Records: raw.Records, ForceInterval: forceInterval,
+		Records: raw.Records, ForceInterval: raw.ForceInterval,
 	}
 	return nil
 }
@@ -121,26 +116,9 @@ type Record struct {
 	//对应的值，如：ipconfig、https://ip.cn
 	GetValue string `yaml:"getValue" mapstructure:"getValue"`
 	//记录同步和获取IP地址的周期，单位秒
-	Interval time.Duration `yaml:"interval" mapstructure:"interval"`
+	Interval int64 `yaml:"interval" mapstructure:"interval"`
 	//筛选IP地址的规则
 	Rule string `yaml:"rule" mapstructure:"rule"`
-}
-
-func (r Record) MarshalYAML() (any, error) {
-	type recordYAML struct {
-		Name       string           `yaml:"name"`
-		SubDomains []string         `yaml:"subDomains"`
-		IPVersion  provider.Version `yaml:"ipVersion"`
-		TTL        int64            `yaml:"ttl"`
-		GetType    string           `yaml:"getType"`
-		GetValue   string           `yaml:"getValue"`
-		Interval   int64            `yaml:"interval"`
-		Rule       string           `yaml:"rule"`
-	}
-	return recordYAML{
-		Name: r.Name, SubDomains: r.SubDomains, IPVersion: r.IPVersion, TTL: r.TTL,
-		GetType: r.GetType, GetValue: r.GetValue, Interval: int64(r.Interval), Rule: r.Rule,
-	}, nil
 }
 
 func (r *Record) UnmarshalYAML(value *yaml.Node) error {
@@ -151,36 +129,18 @@ func (r *Record) UnmarshalYAML(value *yaml.Node) error {
 		TTL        int64            `yaml:"ttl"`
 		GetType    string           `yaml:"getType"`
 		GetValue   string           `yaml:"getValue"`
-		Interval   yaml.Node        `yaml:"interval"`
+		Interval   int64            `yaml:"interval"`
 		Rule       string           `yaml:"rule"`
 	}
 	var raw recordYAML
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	interval, err := durationFromYAML(raw.Interval, 0)
-	if err != nil {
-		return err
-	}
 	*r = Record{
 		Name: raw.Name, SubDomains: raw.SubDomains, IPVersion: raw.IPVersion, TTL: raw.TTL,
-		GetType: raw.GetType, GetValue: raw.GetValue, Interval: interval, Rule: raw.Rule,
+		GetType: raw.GetType, GetValue: raw.GetValue, Interval: raw.Interval, Rule: raw.Rule,
 	}
 	return nil
-}
-
-func durationFromYAML(node yaml.Node, fallback time.Duration) (time.Duration, error) {
-	if node.Kind == 0 || strings.TrimSpace(node.Value) == "" {
-		return fallback, nil
-	}
-	if node.Tag == "!!int" {
-		value, err := strconv.ParseInt(node.Value, 10, 64)
-		return time.Duration(value), err
-	}
-	if value, err := strconv.ParseInt(node.Value, 10, 64); err == nil {
-		return time.Duration(value), nil
-	}
-	return time.ParseDuration(node.Value)
 }
 
 // Validate 检查配置的有效性
