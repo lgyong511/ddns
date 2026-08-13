@@ -7,6 +7,7 @@ import (
 	"ddns/pkg/version"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -93,6 +94,40 @@ func TestDeleteCloudRecordsFiltersRecordType(t *testing.T) {
 	}
 	if len(operator.deleted) != 1 || operator.deleted[0] != "a-record@example.com" {
 		t.Fatalf("deleted records = %v, want [a-record@example.com]", operator.deleted)
+	}
+}
+
+func TestConfigReadErrorsAreReturned(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.yaml")
+	if err := os.WriteFile(configPath, []byte("providers: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{configPath: configPath, sessions: newSessionStore()}
+	server.templates, _ = parseTemplates()
+
+	tests := []struct {
+		name    string
+		handler http.Handler
+	}{
+		{name: "setup", handler: http.HandlerFunc(server.setup)},
+		{name: "login", handler: http.HandlerFunc(server.login)},
+		{name: "require auth", handler: server.requireAuth(func(http.ResponseWriter, *http.Request) {})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tt.name == "require auth" {
+				request.URL.Path = "/protected"
+			}
+			response := httptest.NewRecorder()
+			tt.handler.ServeHTTP(response, request)
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
+			}
+			if strings.Contains(response.Body.String(), "首次设置") || strings.Contains(response.Body.String(), "登录") {
+				t.Fatalf("handler entered an initialization or login flow: %s", response.Body.String())
+			}
+		})
 	}
 }
 

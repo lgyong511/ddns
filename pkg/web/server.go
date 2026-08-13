@@ -179,7 +179,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := loadConfig(s.configPath)
+	cfg, err := loadConfig(s.configPath)
+	if err != nil {
+		s.renderConfigError(w, err)
+		return
+	}
 	if cfg.Auth.PasswordHash != "" {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
@@ -218,7 +222,11 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := loadConfig(s.configPath)
+	cfg, err := loadConfig(s.configPath)
+	if err != nil {
+		s.renderConfigError(w, err)
+		return
+	}
 	if cfg.Auth.PasswordHash == "" {
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
@@ -327,7 +335,7 @@ func (s *Server) providerForm(idx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cfg, err := loadConfig(s.configPath)
 		if err != nil {
-			s.renderError(w, r, err)
+			s.renderConfigError(w, err)
 			return
 		}
 		form := providerForm{Name: "", Provider: "", ForceInterval: "", Records: []recordForm{{IPVersion: "4", GetType: "url"}}}
@@ -629,7 +637,11 @@ func (s *Server) apiNics(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg, _ := loadConfig(s.configPath)
+		cfg, err := loadConfig(s.configPath)
+		if err != nil {
+			s.renderConfigError(w, err)
+			return
+		}
 		if cfg.Auth.PasswordHash == "" {
 			http.Redirect(w, r, "/setup", http.StatusSeeOther)
 			return
@@ -700,6 +712,11 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	s.render(w, "error.html", s.page(r, "出错了", map[string]any{"Error": err.Error()}))
+}
+
+func (s *Server) renderConfigError(w http.ResponseWriter, err error) {
+	slog.Error("读取配置文件失败", "path", s.configPath, "err", err)
+	http.Error(w, "配置文件读取失败", http.StatusInternalServerError)
 }
 
 func (s *Server) renderProviderError(w http.ResponseWriter, r *http.Request, idx int, err error) {
