@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 
@@ -88,10 +89,14 @@ func (m *Manager) watchConfig() {
 	m.vp.OnConfigChange(func(in fsnotify.Event) {
 		var cfg Config
 		if err := m.vp.Unmarshal(&cfg); err != nil {
-			return // 解析失败不更新配置，保持原有配置继续使用
+			// 解析失败不更新配置，保持原有配置继续使用
+			slog.Error("热加载配置文件失败！解析新配置失败！", "err", err)
+			return
 		}
 		if err := cfg.Validate(); err != nil {
-			return // 验证失败不更新配置，保持原有配置继续使用
+			// 验证失败不更新配置，保持原有配置继续使用
+			slog.Error("热加载配置文件失败！验证新配置失败！", "err", err)
+			return
 		}
 		m.rwMutex.Lock()
 		m.config = &cfg
