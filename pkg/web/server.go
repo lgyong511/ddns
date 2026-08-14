@@ -191,6 +191,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.logo(w, r)
 	case path == "setup":
 		s.setup(w, r)
+	case path == "import":
+		s.importConfig(w, r)
+	case path == "export":
+		s.requireAuth(s.exportConfig)(w, r)
 	case path == "login":
 		s.login(w, r)
 	case path == "logout":
@@ -245,7 +249,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		s.render(w, "setup.html", map[string]any{"Title": "首次设置"})
+		s.render(w, "setup.html", map[string]any{"Title": "首次设置", "Imported": importSuccess(r)})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -398,7 +402,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "error.html", s.page(r, "配置管理", map[string]any{"Error": err.Error()}))
 		return
 	}
-	s.render(w, "home.html", s.page(r, "配置管理", map[string]any{"Config": cfg}))
+	s.render(w, "home.html", s.page(r, "配置管理", map[string]any{"Config": cfg, "Imported": importSuccess(r)}))
 }
 
 func (s *Server) providerForm(idx int) http.HandlerFunc {

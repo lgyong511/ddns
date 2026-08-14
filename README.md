@@ -48,7 +48,7 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 ./ddns -web -c conf.yaml -p 8686
 ```
 
-启动后访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。首次启动需要先设置登录账号和密码；Web 页面保存的配置默认位于用户目录下的 `.ddns_conf.yaml`。不指定 `-c` 时，Web 模式会尝试从可执行文件同目录的 `conf.yaml` 导入初始配置。更多配置说明请参阅下方的 [Web 控制台](#web-控制台)章节。
+启动后访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。首次启动需要先设置登录账号和密码；Web 页面保存的配置默认位于用户目录下的 `.ddns_conf.yaml`。不指定 `-c` 时，Web 模式会尝试从可执行文件同目录的 `conf.yaml` 导入初始配置。首次设置页可导入已有 YAML 配置；登录后可在页面顶部菜单导入或导出配置。更多配置说明请参阅下方的 [Web 控制台](#web-控制台)章节。
 
 
 ### 3. Docker 运行
@@ -67,7 +67,6 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
-  -v /app/:/app/config/ \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -80,7 +79,6 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
-  -v /app/:/app/config/ \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
@@ -287,6 +285,16 @@ Web 模式使用用户目录下的 `.ddns_conf.yaml` 保存配置：
 ./ddns -web -c /path/to/conf.yaml
 ```
 
+### 通过页面导入和导出
+
+首次设置页可选择本地 `.yaml` 或 `.yml` 文件导入已有配置；登录后，页面顶部菜单也提供导入和导出入口。
+
+- 导入会覆盖当前所有 DNS 服务商和 Webhook 设置，且不会创建备份；导入页面会显示覆盖警示；
+- 导入文件中的 Web 登录账号和密码哈希会被忽略，始终保留当前控制台账号。首次设置阶段导入后，仍需创建账号；
+- 导出仅包含 DNS 服务商和 Webhook，不包含 `auth`、用户名或密码哈希；导出的 YAML 可再次用于导入；
+- 导出文件包含服务商密钥和可能含敏感信息的 Webhook 内容，请妥善保存，不要提交到公开仓库；
+- 单个导入请求体最大 1 MiB，导入成功后会自动热加载配置。
+
 ### Docker 使用 Web 控制台
 
 Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启动命令：
@@ -294,11 +302,10 @@ Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
-  -v /app/:/app/config/ \
   ghcr.io/lgyong511/ddns:latest
 ```
 
-Web 页面保存的配置默认位于容器内 `/root/.ddns_conf.yaml`；如需持久化，请额外挂载容器用户目录。
+Docker 镜像不会使用 `-c` 导入 `/app/config/conf.yaml`，首次启动会创建空的 Web 配置。Web 页面保存的配置默认位于容器内 `/root/.ddns_conf.yaml`；如需持久化，请额外挂载容器用户目录。
 
 Web 控制台默认监听所有网卡。部署在公网或局域网环境时，请通过防火墙、反向代理或其他访问控制措施限制访问，并妥善保管登录密码和 DNS 服务商密钥。
 

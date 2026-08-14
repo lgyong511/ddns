@@ -82,7 +82,9 @@ p {
 }
 
 .topbar {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 10;
   flex: 0 0 58px;
   height: 58px;
   display: flex;
@@ -739,6 +741,49 @@ textarea {
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 16px;
+}
+
+.notice {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.import-card {
+  width: min(560px, 100%);
+}
+
+.import-warning {
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #991b1b;
+}
+
+.import-warning p {
+  margin: 6px 0 0;
+  color: #7f1d1d;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.danger-button {
+  background: var(--danger);
+  color: white;
+}
+
+.danger-button:hover {
+  background: #b91c1c;
 }
 
 .terminal {

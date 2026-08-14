@@ -1,0 +1,41 @@
+{{define "config_import.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DDNS 控制台 - 导入配置</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body{{if .IsSetup}} class="auth-page"{{end}}>
+  {{if .IsSetup}}
+  <main class="auth-card import-card">
+    <img class="brand-logo" src="/static/logo.svg" alt="DDNS">
+    <h1>导入已有配置</h1>
+    <p class="muted">导入完成后，请返回首次设置页面创建 Web 控制台账号。</p>
+  {{else}}
+  <header class="topbar">
+    <a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a>
+    <nav><a href="/">返回配置</a><a href="/export" title="导出文件包含服务商密钥和 Webhook 内容">导出配置</a><span class="version">版本 {{.Version}}</span></nav>
+  </header>
+  <main class="shell narrow">
+    <section class="page-title"><div><h1>导入配置</h1><p>使用本地 YAML 文件覆盖当前 DNS 服务商和 Webhook 设置。</p></div></section>
+  {{end}}
+    {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+    <section class="import-warning">
+      <strong>此操作会覆盖现有配置</strong>
+      <p>导入将替换所有 DNS 服务商和 Webhook 设置，且无法撤销。当前 Web 控制台账号和密码不会被覆盖。</p>
+    </section>
+    <form class="panel import-form" method="post" action="/import" enctype="multipart/form-data">
+      {{if .CSRF}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
+      <label>YAML 配置文件<input name="configFile" type="file" accept=".yaml,.yml,application/x-yaml,text/yaml" required></label>
+      <div class="form-actions">
+        {{if .IsSetup}}<a class="button" href="/setup">返回首次设置</a>{{else}}<a class="button" href="/">取消</a>{{end}}
+        <button class="button danger-button" type="submit">确认导入并覆盖</button>
+      </div>
+    </form>
+  {{if .IsSetup}}</main>{{else}}</main>{{end}}
+</body>
+</html>
+{{end}}

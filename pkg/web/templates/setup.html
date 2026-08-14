@@ -13,6 +13,7 @@
     <img class="brand-logo" src="/static/logo.svg" alt="DDNS">
     <h1>首次设置</h1>
     <p class="muted">创建 Web 控制台账号，密码将以 bcrypt 哈希保存到配置文件。</p>
+    {{if .Imported}}<div class="notice">配置已导入。请继续创建 Web 控制台账号。</div>{{end}}
     {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
     <form method="post" action="/setup">
       <label>账号<input name="username" maxlength="64" autocomplete="username" required autofocus></label>
@@ -20,6 +21,7 @@
       <label>确认密码<input name="confirm" type="password" maxlength="72" autocomplete="new-password" required></label>
       <button class="primary" type="submit">保存账号</button>
     </form>
+    <a class="button" href="/import">导入已有配置</a>
   </main>
 </body>
 </html>

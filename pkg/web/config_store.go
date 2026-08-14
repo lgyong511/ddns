@@ -2,6 +2,8 @@ package web
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -66,13 +68,43 @@ func loadConfig(path string) (config.Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return config.Config{}, err
 	}
+	normalizeConfig(&cfg)
+	return cfg, nil
+}
+
+func parseImportedConfig(r io.Reader, filename string) (config.Config, error) {
+	extension := strings.ToLower(filepath.Ext(filename))
+	if extension != ".yaml" && extension != ".yml" {
+		return config.Config{}, fmt.Errorf("仅支持 .yaml 或 .yml 配置文件")
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxRequestBodyBytes+1))
+	if err != nil {
+		return config.Config{}, fmt.Errorf("读取导入文件失败: %w", err)
+	}
+	if len(data) == 0 {
+		return config.Config{}, fmt.Errorf("导入文件不能为空")
+	}
+	if len(data) > maxRequestBodyBytes {
+		return config.Config{}, fmt.Errorf("导入文件超过 1 MiB 限制")
+	}
+	var cfg config.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return config.Config{}, fmt.Errorf("解析 YAML 配置失败: %w", err)
+	}
+	normalizeConfig(&cfg)
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, fmt.Errorf("配置校验失败: %w", err)
+	}
+	return cfg, nil
+}
+
+func normalizeConfig(cfg *config.Config) {
 	if cfg.Providers == nil {
 		cfg.Providers = []config.Provider{}
 	}
 	if cfg.Webhook.Headers == nil {
 		cfg.Webhook.Headers = []string{}
 	}
-	return cfg, nil
 }
 
 func saveConfig(path string, cfg *config.Config) error {
@@ -117,12 +149,7 @@ func samePath(a, b string) bool {
 }
 
 func (s *Server) persist(cfg *config.Config) error {
-	if cfg.Providers == nil {
-		cfg.Providers = []config.Provider{}
-	}
-	if cfg.Webhook.Headers == nil {
-		cfg.Webhook.Headers = []string{}
-	}
+	normalizeConfig(cfg)
 	if err := cfg.Validate(); err != nil {
 		return err
 	}

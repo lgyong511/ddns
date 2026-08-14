@@ -33,18 +33,16 @@ FROM base-generic AS generic
 WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
 RUN chmod +x /app/bin/ddns
-VOLUME ["/app/config"]
 EXPOSE 8686
-ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml", "-web", "-p", "8686"]
+ENTRYPOINT ["/app/bin/ddns", "-web", "-p", "8686"]
 
 # 4b. 最终打包：软路由专用版（由于 Actions 矩阵已改，实际仅构建 amd64）
 FROM base-openwrt AS openwrt
 WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
 RUN chmod +x /app/bin/ddns
-VOLUME ["/app/config"]
 EXPOSE 8686
-ENTRYPOINT ["/app/bin/ddns", "-c", "/app/config/conf.yaml", "-web", "-p", "8686"]
+ENTRYPOINT ["/app/bin/ddns", "-web", "-p", "8686"]
 
 
 # ==============================================================================

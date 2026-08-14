@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"ddns/pkg/config"
 	"ddns/pkg/provider"
 	"ddns/pkg/version"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -315,6 +317,328 @@ func TestConfigReadErrorsAreReturned(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImportConfigPreservesWebAuth(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	token, csrf, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newImportRequest(t, "import.yaml", `providers:
+  - name: imported
+    provider: aliyun
+    keyId: imported-id
+    keySecret: imported-secret
+    forceInterval: 5
+    records: []
+webhook:
+  url: https://example.com/webhook
+  body: ""
+  headers: []
+auth:
+  username: replaced-user
+  passwordHash: replaced-hash
+`, csrf)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+
+	server.importConfig(response, request)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/?imported=1" {
+		t.Fatalf("response = (%d, %q), want (303, /?imported=1)", response.Code, response.Header().Get("Location"))
+	}
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Auth.Username != "current-user" || updated.Auth.PasswordHash != "current-hash" {
+		t.Fatalf("auth = %#v, want current credentials", updated.Auth)
+	}
+	if len(updated.Providers) != 1 || updated.Providers[0].Name != "imported" {
+		t.Fatalf("providers = %#v, want imported provider", updated.Providers)
+	}
+	if updated.Webhook.URL != "https://example.com/webhook" {
+		t.Fatalf("webhook URL = %q, want imported URL", updated.Webhook.URL)
+	}
+}
+
+func TestImportConfigRejectsInvalidFileWithoutSaving(t *testing.T) {
+	original := `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`
+	server, configPath := newImportTestServer(t, original)
+	request := newImportRequest(t, "invalid.yaml", "providers: [", "")
+	response := httptest.NewRecorder()
+
+	server.importConfig(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "解析 YAML 配置失败") {
+		t.Fatalf("response = (%d, %q), want parse error page", response.Code, response.Body.String())
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("config changed after invalid import:\n%s", data)
+	}
+}
+
+func TestImportConfigRequiresCSRFForConfiguredConsole(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	token, _, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newImportRequest(t, "import.yaml", validImportYAML, "")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+
+	server.importConfig(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Providers) != 0 {
+		t.Fatalf("providers changed after missing CSRF: %#v", updated.Providers)
+	}
+}
+
+func TestImportConfigAllowsSetupWithoutCSRF(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`)
+	request := newImportRequest(t, "import.yml", validImportYAML, "")
+	response := httptest.NewRecorder()
+
+	server.importConfig(response, request)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/setup?imported=1" {
+		t.Fatalf("response = (%d, %q), want setup redirect", response.Code, response.Header().Get("Location"))
+	}
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Providers) != 1 || updated.Auth.PasswordHash != "" {
+		t.Fatalf("updated config = %#v, want imported config without auth", updated)
+	}
+}
+
+func TestParseImportedConfigRejectsUnsupportedAndOversizedFiles(t *testing.T) {
+	if _, err := parseImportedConfig(strings.NewReader(validImportYAML), "config.json"); err == nil {
+		t.Fatal("parseImportedConfig accepted unsupported filename")
+	}
+	tooLarge := strings.Repeat("a", maxRequestBodyBytes+1)
+	if _, err := parseImportedConfig(strings.NewReader(tooLarge), "config.yaml"); err == nil {
+		t.Fatal("parseImportedConfig accepted oversized config")
+	}
+}
+
+func TestImportConfigRequiresFileAndRendersWarning(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`)
+	getRequest := httptest.NewRequest(http.MethodGet, "/import", nil)
+	getResponse := httptest.NewRecorder()
+	server.importConfig(getResponse, getRequest)
+	page := getResponse.Body.String()
+	if getResponse.Code != http.StatusOK || !strings.Contains(page, "无法撤销") || strings.Contains(page, "confirmOverwrite") {
+		t.Fatalf("import page warning or confirmation field is incorrect: %s", page)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(""))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	server.importConfig(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "请选择要导入") {
+		t.Fatalf("response = (%d, %q), want missing-file error page", response.Code, response.Body.String())
+	}
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Providers) != 0 {
+		t.Fatalf("providers changed after missing file: %#v", updated.Providers)
+	}
+}
+
+func TestExportConfigExcludesAuthAndCanBeImported(t *testing.T) {
+	server, _ := newImportTestServer(t, `providers:
+  - name: home
+    provider: aliyun
+    keyId: exported-id
+    keySecret: exported-secret
+    forceInterval: 5
+    records: []
+webhook:
+  url: https://example.com/webhook
+  body: '{"token":"secret"}'
+  headers: []
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	token, _, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/export", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+
+	server.requireAuth(server.exportConfig).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if contentType := response.Header().Get("Content-Type"); contentType != "application/x-yaml; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", contentType)
+	}
+	contentDisposition := response.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(contentDisposition, "attachment; filename=\"ddns-config-") || !strings.HasSuffix(contentDisposition, ".yaml\"") {
+		t.Fatalf("Content-Disposition = %q", contentDisposition)
+	}
+	output := response.Body.String()
+	if strings.Contains(output, "auth:") || strings.Contains(output, "current-user") || strings.Contains(output, "current-hash") {
+		t.Fatalf("export leaked Web auth: %s", output)
+	}
+	exported, err := parseImportedConfig(strings.NewReader(output), "ddns-config.yaml")
+	if err != nil {
+		t.Fatalf("export cannot be imported: %v", err)
+	}
+	if len(exported.Providers) != 1 || exported.Providers[0].KeySecret != "exported-secret" {
+		t.Fatalf("exported providers = %#v", exported.Providers)
+	}
+	if exported.Webhook.URL != "https://example.com/webhook" {
+		t.Fatalf("exported webhook URL = %q", exported.Webhook.URL)
+	}
+}
+
+func TestExportConfigRequiresAuthenticatedConsole(t *testing.T) {
+	configuredServer, _ := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	configuredResponse := httptest.NewRecorder()
+	configuredServer.requireAuth(configuredServer.exportConfig).ServeHTTP(
+		configuredResponse,
+		httptest.NewRequest(http.MethodGet, "/export", nil),
+	)
+	if configuredResponse.Code != http.StatusSeeOther || configuredResponse.Header().Get("Location") != "/login" {
+		t.Fatalf("configured response = (%d, %q), want login redirect", configuredResponse.Code, configuredResponse.Header().Get("Location"))
+	}
+
+	setupServer, _ := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`)
+	setupResponse := httptest.NewRecorder()
+	setupServer.requireAuth(setupServer.exportConfig).ServeHTTP(
+		setupResponse,
+		httptest.NewRequest(http.MethodGet, "/export", nil),
+	)
+	if setupResponse.Code != http.StatusSeeOther || setupResponse.Header().Get("Location") != "/setup" {
+		t.Fatalf("setup response = (%d, %q), want setup redirect", setupResponse.Code, setupResponse.Header().Get("Location"))
+	}
+}
+
+const validImportYAML = `providers:
+  - name: imported
+    provider: aliyun
+    keyId: imported-id
+    keySecret: imported-secret
+    forceInterval: 5
+    records: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: imported-user
+  passwordHash: imported-hash
+`
+
+func newImportTestServer(t *testing.T, configData string) (*Server, string) {
+	t.Helper()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	templates, err := parseTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{
+		configPath: configPath,
+		templates:  templates,
+		sessions:   newSessionStore(),
+	}, configPath
+}
+
+func newImportRequest(t *testing.T, filename, configData, csrf string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if csrf != "" {
+		if err := writer.WriteField("csrf", csrf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := writer.CreateFormFile("configFile", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte(configData)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/import", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	return request
 }
 
 func TestLoginLimiterLocksAndBacksOff(t *testing.T) {
