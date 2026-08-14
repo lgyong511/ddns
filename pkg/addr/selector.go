@@ -60,10 +60,11 @@ func (s *Splice) Select(addrs []netip.Addr) netip.Addr {
 	if len(addrs) == 0 {
 		return netip.Addr{}
 	}
-	if s.Index <= 0 || s.Index > len(addrs) {
-		s.Index = 1
+	index := s.Index
+	if index <= 0 || index > len(addrs) {
+		index = 1
 	}
-	addr := addrs[s.Index-1]
+	addr := addrs[index-1]
 	if !addr.Is6() {
 		return netip.Addr{}
 	}

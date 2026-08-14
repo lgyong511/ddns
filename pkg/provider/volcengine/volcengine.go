@@ -7,7 +7,6 @@ import (
 	"ddns/pkg/utils"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -201,7 +200,7 @@ func (v *Volcengine) do(ctx context.Context, method, action string, query url.Va
 		return nil, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}

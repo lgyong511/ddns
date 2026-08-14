@@ -76,9 +76,13 @@ func (u *Url) Fetch(ctx context.Context) ([]netip.Addr, error) {
 			}
 
 			// 读取响应体，限制最大读取1MB
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20+1))
 			if err != nil {
 				resultCh <- result{nil, err}
+				return
+			}
+			if len(body) > 1<<20 {
+				resultCh <- result{nil, fmt.Errorf("URL Fetcher: 响应内容超过 1 MiB 限制")}
 				return
 			}
 			ips, err := extractFromString(string(body))

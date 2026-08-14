@@ -6,14 +6,11 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +22,6 @@ import (
 	"ddns/pkg/provider"
 	"ddns/pkg/version"
 
-	"go.yaml.in/yaml/v3"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -43,21 +39,36 @@ type Reloader interface {
 	Reload() error
 }
 
+type ConfigStore interface {
+	Get() (*config.Config, error)
+	Save(*config.Config) error
+}
+
 type CloudOperator interface {
 	provider.Getter
 	provider.Deleter
+	provider.Creator
 }
 
 type CloudOperatorFactory func(config.Provider) (CloudOperator, error)
 
 type Server struct {
 	configPath           string
+	configMu             sync.Mutex
 	reloader             Reloader
+	configStore          ConfigStore
 	logs                 *ddnslog.Buffer
 	templates            *template.Template
 	sessions             *sessionStore
 	loginLimit           *loginLimiter
 	cloudOperatorFactory CloudOperatorFactory
+	cloudCleanupQueue    chan cloudCleanupJob
+	cloudCleanupCtx      context.Context
+	cloudCleanupCancel   context.CancelFunc
+	cloudCleanupWG       sync.WaitGroup
+	cloudCleanupMu       sync.Mutex
+	cloudCleanupClosed   bool
+	closeOnce            sync.Once
 }
 
 const maxRequestBodyBytes = 1 << 20
@@ -65,6 +76,7 @@ const maxRequestBodyBytes = 1 << 20
 type Options struct {
 	ConfigPath           string
 	Reloader             Reloader
+	ConfigStore          ConfigStore
 	Logs                 *ddnslog.Buffer
 	CloudOperatorFactory CloudOperatorFactory
 }
@@ -78,44 +90,83 @@ func New(options Options) (*Server, error) {
 	if logs == nil {
 		logs = ddnslog.DefaultBuffer
 	}
-	return &Server{
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	server := &Server{
 		configPath:           options.ConfigPath,
 		reloader:             options.Reloader,
+		configStore:          options.ConfigStore,
 		logs:                 logs,
 		templates:            tmpl,
 		sessions:             newSessionStore(),
 		loginLimit:           newLoginLimiter(),
 		cloudOperatorFactory: options.CloudOperatorFactory,
-	}, nil
+		cloudCleanupQueue:    make(chan cloudCleanupJob, 16),
+		cloudCleanupCtx:      cleanupCtx,
+		cloudCleanupCancel:   cleanupCancel,
+	}
+	server.startCloudCleanupWorker()
+	return server, nil
 }
 
-func EnsureConfigFile(path string) error {
-	return PrepareConfigFile(path, nil)
+type cloudCleanupJob struct {
+	provider config.Provider
+	record   config.Record
 }
 
-func PrepareConfigFile(path string, importCandidates []string) error {
-	if _, err := os.Stat(path); err == nil {
+func (s *Server) startCloudCleanupWorker() {
+	s.cloudCleanupWG.Add(1)
+	go func() {
+		defer s.cloudCleanupWG.Done()
+		for {
+			select {
+			case <-s.cloudCleanupCtx.Done():
+				return
+			case job := <-s.cloudCleanupQueue:
+				s.runCloudCleanup(job)
+			}
+		}
+	}()
+}
+
+func (s *Server) runCloudCleanup(job cloudCleanupJob) {
+	slog.Info("开始异步删除云端解析记录", "provider", job.provider.Name, "providerType", job.provider.Provider, "record", job.record.Name, "subDomains", job.record.SubDomains)
+	if s.cloudOperatorFactory == nil {
+		slog.Warn("删除解析记录失败", "provider", job.provider.Name, "record", job.record.Name, "stage", "cloud", "err", "云端删除功能未配置")
+		return
+	}
+	operator, err := s.cloudOperatorFactory(job.provider)
+	if err != nil {
+		slog.Warn("删除解析记录失败", "provider", job.provider.Name, "record", job.record.Name, "stage", "cloud_init", "err", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.cloudCleanupCtx, 45*time.Second)
+	defer cancel()
+	if err := deleteCloudRecordsWithRetry(ctx, operator, job.record, 3, time.Second); err != nil {
+		slog.Warn("删除解析记录失败", "provider", job.provider.Name, "record", job.record.Name, "stage", "cloud", "attempts", 4, "err", err)
+		return
+	}
+	slog.Info("云端解析记录删除成功", "provider", job.provider.Name, "record", job.record.Name)
+}
+
+// Close 取消后台云端清理并等待其退出。
+func (s *Server) Close(ctx context.Context) error {
+	s.closeOnce.Do(func() {
+		s.cloudCleanupMu.Lock()
+		s.cloudCleanupClosed = true
+		s.cloudCleanupCancel()
+		s.cloudCleanupMu.Unlock()
+	})
+	done := make(chan struct{})
+	go func() {
+		s.cloudCleanupWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
 		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	for _, candidate := range importCandidates {
-		if samePath(path, candidate) {
-			continue
-		}
-		cfg, err := loadConfig(candidate)
-		if err != nil {
-			continue
-		}
-		if err := cfg.Validate(); err != nil {
-			continue
-		}
-		return saveConfig(path, &cfg)
-	}
-
-	cfg := config.Config{Providers: []config.Provider{}, Webhook: config.Webhook{Headers: []string{}}}
-	return saveConfig(path, &cfg)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -182,7 +233,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
-	cfg, err := loadConfig(s.configPath)
+	unlock := s.lockConfigForMutation(r)
+	defer unlock()
+	cfg, err := s.readConfig()
 	if err != nil {
 		s.renderConfigError(w, err)
 		return
@@ -225,7 +278,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	cfg, err := loadConfig(s.configPath)
+	cfg, err := s.readConfig()
 	if err != nil {
 		s.renderConfigError(w, err)
 		return
@@ -288,7 +341,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
-	cfg, err := loadConfig(s.configPath)
+	unlock := s.lockConfigForMutation(r)
+	defer unlock()
+	cfg, err := s.readConfig()
 	if err != nil {
 		s.renderError(w, r, err)
 		return
@@ -338,7 +393,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	cfg, err := loadConfig(s.configPath)
+	cfg, err := s.readConfig()
 	if err != nil {
 		s.render(w, "error.html", s.page(r, "配置管理", map[string]any{"Error": err.Error()}))
 		return
@@ -348,7 +403,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) providerForm(idx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderConfigError(w, err)
 			return
@@ -373,11 +428,13 @@ func (s *Server) providerForm(idx int) http.HandlerFunc {
 
 func (s *Server) saveProvider(idx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		unlock := s.lockConfigForMutation(r)
+		defer unlock()
 		if !s.validCSRF(r) {
 			http.Error(w, "CSRF token invalid", http.StatusForbidden)
 			return
 		}
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
 			return
@@ -420,11 +477,13 @@ func (s *Server) saveProvider(idx int) http.HandlerFunc {
 
 func (s *Server) deleteProvider(idx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		unlock := s.lockConfigForMutation(r)
+		defer unlock()
 		if !s.validCSRF(r) {
 			http.Error(w, "CSRF token invalid", http.StatusForbidden)
 			return
 		}
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
 			return
@@ -444,7 +503,7 @@ func (s *Server) deleteProvider(idx int) http.HandlerFunc {
 
 func (s *Server) recordForm(pIdx, rIdx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
 			return
@@ -477,11 +536,13 @@ func (s *Server) recordForm(pIdx, rIdx int) http.HandlerFunc {
 
 func (s *Server) saveRecord(pIdx, rIdx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		unlock := s.lockConfigForMutation(r)
+		defer unlock()
 		if !s.validCSRF(r) {
 			http.Error(w, "CSRF token invalid", http.StatusForbidden)
 			return
 		}
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
 			return
@@ -514,11 +575,13 @@ func (s *Server) saveRecord(pIdx, rIdx int) http.HandlerFunc {
 
 func (s *Server) deleteRecord(pIdx, rIdx int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		unlock := s.lockConfigForMutation(r)
+		defer unlock()
 		if !s.validCSRF(r) {
 			http.Error(w, "CSRF token invalid", http.StatusForbidden)
 			return
 		}
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
 			return
@@ -530,61 +593,44 @@ func (s *Server) deleteRecord(pIdx, rIdx int) http.HandlerFunc {
 		record := cfg.Providers[pIdx].Records[rIdx]
 		deleteCloud := r.FormValue("deleteCloud") == "true"
 		slog.Warn("开始删除解析记录", "provider", cfg.Providers[pIdx].Name, "providerType", cfg.Providers[pIdx].Provider, "record", record.Name, "subDomains", record.SubDomains, "deleteCloud", deleteCloud)
-		if deleteCloud {
-			if s.cloudOperatorFactory == nil {
-				slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "cloud", "err", "云端删除功能未配置")
-				s.renderError(w, r, errors.New("云端删除功能未配置"))
-				return
-			}
-			operator, err := s.cloudOperatorFactory(cfg.Providers[pIdx])
-			if err != nil {
-				slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "cloud_init", "err", err)
-				s.renderError(w, r, fmt.Errorf("初始化云端操作器失败: %w", err))
-				return
-			}
-			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-			err = deleteCloudRecords(ctx, operator, record)
-			cancel()
-			if err != nil {
-				slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "cloud", "err", err)
-				s.renderError(w, r, err)
-				return
-			}
-		}
-		records := cfg.Providers[pIdx].Records
-		cfg.Providers[pIdx].Records = append(records[:rIdx], records[rIdx+1:]...)
+		records := make([]config.Record, 0, len(cfg.Providers[pIdx].Records)-1)
+		records = append(records, cfg.Providers[pIdx].Records[:rIdx]...)
+		records = append(records, cfg.Providers[pIdx].Records[rIdx+1:]...)
+		cfg.Providers[pIdx].Records = records
 		if err := s.persist(&cfg); err != nil {
 			slog.Warn("删除解析记录失败", "provider", cfg.Providers[pIdx].Name, "record", record.Name, "stage", "local", "err", err)
 			s.renderError(w, r, err)
 			return
 		}
+
+		if deleteCloud {
+			job := cloudCleanupJob{provider: cfg.Providers[pIdx], record: record}
+			job.record.SubDomains = append([]string(nil), record.SubDomains...)
+			s.enqueueCloudCleanup(job)
+		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
 }
 
-func deleteCloudRecords(ctx context.Context, operator CloudOperator, record config.Record) error {
-	for _, subDomain := range record.SubDomains {
-		cloudRecords, err := operator.GetSub(ctx, subDomain, record.IPVersion)
-		if errors.Is(err, provider.ErrRecordNotFound) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("查询云端记录 %q 失败: %w", subDomain, err)
-		}
-		for _, cloudRecord := range cloudRecords {
-			if cloudRecord.Type != record.IPVersion.RecordType() {
-				continue
-			}
-			if err := operator.Delete(ctx, cloudRecord.RecordId, cloudRecord.DomainName); err != nil {
-				return fmt.Errorf("删除云端记录 %q 失败: %w", subDomain, err)
-			}
-		}
+func (s *Server) enqueueCloudCleanup(job cloudCleanupJob) {
+	s.cloudCleanupMu.Lock()
+	defer s.cloudCleanupMu.Unlock()
+	if s.cloudCleanupClosed {
+		slog.Warn("云端删除任务未投递，服务正在关闭", "provider", job.provider.Name, "record", job.record.Name)
+		return
 	}
-	return nil
+	select {
+	case s.cloudCleanupQueue <- job:
+		slog.Info("云端删除任务已投递", "provider", job.provider.Name, "record", job.record.Name)
+	default:
+		slog.Warn("云端删除任务队列已满，丢弃任务", "provider", job.provider.Name, "record", job.record.Name)
+	}
 }
 
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
-	cfg, err := loadConfig(s.configPath)
+	unlock := s.lockConfigForMutation(r)
+	defer unlock()
+	cfg, err := s.readConfig()
 	if err != nil {
 		s.renderError(w, r, err)
 		return
@@ -612,6 +658,14 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) lockConfigForMutation(r *http.Request) func() {
+	if r.Method != http.MethodPost {
+		return func() {}
+	}
+	s.configMu.Lock()
+	return s.configMu.Unlock
 }
 
 func (s *Server) logsPage(w http.ResponseWriter, r *http.Request) {
@@ -652,7 +706,7 @@ func (s *Server) apiNics(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg, err := loadConfig(s.configPath)
+		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderConfigError(w, err)
 			return
@@ -696,28 +750,6 @@ func (s *Server) page(r *http.Request, title string, data map[string]any) map[st
 	return data
 }
 
-func (s *Server) persist(cfg *config.Config) error {
-	if cfg.Providers == nil {
-		cfg.Providers = []config.Provider{}
-	}
-	if cfg.Webhook.Headers == nil {
-		cfg.Webhook.Headers = []string{}
-	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	if err := saveConfig(s.configPath, cfg); err != nil {
-		return err
-	}
-	if s.reloader != nil {
-		if err := s.reloader.Reload(); err != nil {
-			return err
-		}
-	}
-	slog.Info("配置已通过 Web 控制台保存")
-	return nil
-}
-
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
@@ -751,68 +783,6 @@ func (s *Server) renderRecordError(w http.ResponseWriter, r *http.Request, pIdx,
 	}
 	nics, _ := nicOptions()
 	s.render(w, "record_form.html", s.page(r, "解析记录", map[string]any{"Form": form, "Action": action, "NICs": nics, "Error": err.Error()}))
-}
-
-func loadConfig(path string) (config.Config, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return config.Config{Providers: []config.Provider{}, Webhook: config.Webhook{Headers: []string{}}}, nil
-	}
-	if err != nil {
-		return config.Config{}, err
-	}
-	var cfg config.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return config.Config{}, err
-	}
-	if cfg.Providers == nil {
-		cfg.Providers = []config.Provider{}
-	}
-	if cfg.Webhook.Headers == nil {
-		cfg.Webhook.Headers = []string{}
-	}
-	return cfg, nil
-}
-
-func saveConfig(path string, cfg *config.Config) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".conf-*.yaml")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
-}
-
-func samePath(a, b string) bool {
-	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
-		return false
-	}
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
-	if errA != nil || errB != nil {
-		return a == b
-	}
-	return absA == absB
 }
 
 type providerForm struct {
@@ -1064,12 +1034,15 @@ const (
 	loginFailureThreshold = 5
 	loginInitialLock      = 15 * time.Minute
 	loginMaxLock          = 24 * time.Hour
+	loginStateTTL         = 24 * time.Hour
+	loginMaxStates        = 10000
 )
 
 type loginAttempt struct {
 	failures    int
 	lockLevel   int
 	lockedUntil time.Time
+	lastSeen    time.Time
 }
 
 type loginLimiter struct {
@@ -1084,6 +1057,7 @@ func newLoginLimiter() *loginLimiter {
 func (l *loginLimiter) check(key string, now time.Time) (time.Duration, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.cleanupLocked(now)
 	attempt, ok := l.attempts[key]
 	if !ok || !now.Before(attempt.lockedUntil) {
 		return 0, false
@@ -1094,13 +1068,16 @@ func (l *loginLimiter) check(key string, now time.Time) (time.Duration, bool) {
 func (l *loginLimiter) failure(key string, now time.Time) (time.Duration, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.cleanupLocked(now)
 	attempt := l.attempts[key]
 	if now.Before(attempt.lockedUntil) {
 		return attempt.lockedUntil.Sub(now), true
 	}
 	attempt.failures++
 	if attempt.failures < loginFailureThreshold {
+		attempt.lastSeen = now
 		l.attempts[key] = attempt
+		l.trimLocked()
 		return 0, false
 	}
 	lockDuration := loginInitialLock
@@ -1114,7 +1091,9 @@ func (l *loginLimiter) failure(key string, now time.Time) (time.Duration, bool) 
 	attempt.failures = 0
 	attempt.lockLevel++
 	attempt.lockedUntil = now.Add(lockDuration)
+	attempt.lastSeen = now
 	l.attempts[key] = attempt
+	l.trimLocked()
 	return lockDuration, true
 }
 
@@ -1122,6 +1101,43 @@ func (l *loginLimiter) success(key string) {
 	l.mu.Lock()
 	delete(l.attempts, key)
 	l.mu.Unlock()
+}
+
+func (l *loginLimiter) cleanupLocked(now time.Time) {
+	for key, attempt := range l.attempts {
+		if now.Sub(attempt.lastSeen) > loginStateTTL && !now.Before(attempt.lockedUntil) {
+			delete(l.attempts, key)
+		}
+	}
+}
+
+func (l *loginLimiter) trimLocked() {
+	for len(l.attempts) > loginMaxStates {
+		var oldestKey string
+		var oldest time.Time
+		for key, attempt := range l.attempts {
+			if nowLocked(attempt) {
+				continue
+			}
+			if oldestKey == "" || attempt.lastSeen.Before(oldest) {
+				oldestKey = key
+				oldest = attempt.lastSeen
+			}
+		}
+		if oldestKey == "" {
+			for key, attempt := range l.attempts {
+				if oldestKey == "" || attempt.lastSeen.Before(oldest) {
+					oldestKey = key
+					oldest = attempt.lastSeen
+				}
+			}
+		}
+		delete(l.attempts, oldestKey)
+	}
+}
+
+func nowLocked(attempt loginAttempt) bool {
+	return !attempt.lockedUntil.IsZero() && time.Now().Before(attempt.lockedUntil)
 }
 
 func loginClientKey(r *http.Request) string {

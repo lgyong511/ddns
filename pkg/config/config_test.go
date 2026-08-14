@@ -129,6 +129,31 @@ func TestConfigValidateStringLimits(t *testing.T) {
 	}
 }
 
+func TestConfigValidateEnumerationsAndRanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"provider", func(cfg *Config) { cfg.Providers[0].Provider = "unknown" }, ".provider 无效"},
+		{"get type", func(cfg *Config) { cfg.Providers[0].Records[0].GetType = "unknown" }, ".getType 无效"},
+		{"ttl", func(cfg *Config) { cfg.Providers[0].Records[0].TTL = 86401 }, ".ttl 无效"},
+		{"interval", func(cfg *Config) { cfg.Providers[0].Records[0].Interval = 61 }, ".interval 无效"},
+		{"force interval", func(cfg *Config) { cfg.Providers[0].ForceInterval = 31 }, ".forceInterval 无效"},
+		{"duid ipv4", func(cfg *Config) { cfg.Providers[0].Records[0].GetType = "duid" }, "duid 仅支持 IPv6"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		Providers: []Provider{{
@@ -145,5 +170,45 @@ func TestValidateDomainNameRejectsOverlongName(t *testing.T) {
 		t.Fatal("validateDomainName accepted an overlong domain")
 	} else if !strings.Contains(err.Error(), "253") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConfigValidateRejectsDuplicateDomainAndVersion(t *testing.T) {
+	tests := []struct {
+		name          string
+		secondDomain  string
+		secondVersion provider.Version
+		wantErr       bool
+	}{
+		{name: "case and trailing dot", secondDomain: "NAS.EXAMPLE.COM.", secondVersion: provider.IPv4, wantErr: true},
+		{name: "unicode and IDNA", secondDomain: "XN--FSQU00A.XN--0ZWM56D", secondVersion: provider.IPv4, wantErr: true},
+		{name: "different address family", secondDomain: "nas.example.com", secondVersion: provider.IPv6, wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			if tt.name == "unicode and IDNA" {
+				cfg.Providers[0].Records[0].SubDomains = []string{"例子.测试"}
+			}
+			cfg.Providers[0].Records = append(cfg.Providers[0].Records, Record{
+				Name: "other", SubDomains: []string{tt.secondDomain}, IPVersion: tt.secondVersion,
+				TTL: 600, GetType: "url", GetValue: "https://example.com", Interval: 30,
+			})
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, want error: %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCloneConfigDeepCopiesSubDomains(t *testing.T) {
+	cfg := validConfig()
+	clone := cloneConfig(&cfg)
+	clone.Providers[0].Records[0].SubDomains[0] = "changed.example.com"
+
+	if cfg.Providers[0].Records[0].SubDomains[0] != "nas.example.com" {
+		t.Fatalf("source subdomain was mutated: %q", cfg.Providers[0].Records[0].SubDomains[0])
 	}
 }

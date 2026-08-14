@@ -8,11 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -26,7 +26,8 @@ type DNSLA struct {
 	APIID     string
 	APISecret string
 
-	domainIDCache map[string]string
+	domainIDCacheMu sync.RWMutex
+	domainIDCache   map[string]string
 }
 
 func NewDNSLA(apiID, apiSecret string) *DNSLA {
@@ -173,7 +174,7 @@ func (d *DNSLA) do(ctx context.Context, method, path string, query url.Values, p
 		return nil, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +202,10 @@ func (d *DNSLA) resolveDomainID(ctx context.Context, domain string) (string, err
 	if domain == "" {
 		return "", fmt.Errorf("DNSLA resolveDomainID: domain 为空")
 	}
-	if cachedID := d.domainIDCache[domain]; cachedID != "" {
+	d.domainIDCacheMu.RLock()
+	cachedID := d.domainIDCache[domain]
+	d.domainIDCacheMu.RUnlock()
+	if cachedID != "" {
 		return cachedID, nil
 	}
 
@@ -222,9 +226,12 @@ func (d *DNSLA) resolveDomainID(ctx context.Context, domain string) (string, err
 	if id == "" {
 		return "", fmt.Errorf("DNSLA 未找到域名 %q 的域名 ID", domain)
 	}
-	if d.domainIDCache != nil {
-		d.domainIDCache[domain] = id
+	d.domainIDCacheMu.Lock()
+	if d.domainIDCache == nil {
+		d.domainIDCache = make(map[string]string)
 	}
+	d.domainIDCache[domain] = id
+	d.domainIDCacheMu.Unlock()
 	return id, nil
 }
 

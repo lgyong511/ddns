@@ -81,9 +81,10 @@ func main() {
 		go ddnsEngine.Start(ctx)
 
 		webServer, err := web.New(web.Options{
-			ConfigPath: path,
-			Reloader:   configManager,
-			Logs:       log.DefaultBuffer,
+			ConfigPath:  path,
+			Reloader:    configManager,
+			ConfigStore: configManager,
+			Logs:        log.DefaultBuffer,
 			CloudOperatorFactory: func(p config.Provider) (web.CloudOperator, error) {
 				return engine.NewOperator(p.Provider, p.KeyID, p.KeySecret)
 			},
@@ -105,8 +106,18 @@ func main() {
 		slog.Info("DDNS Web 控制台已启动", "addr", listenAddr, "config", path)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Web 控制台异常退出", "error", err)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if closeErr := webServer.Close(cleanupCtx); closeErr != nil {
+				slog.Warn("等待云端清理任务退出失败", "error", closeErr)
+			}
+			cancel()
 			os.Exit(1)
 		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := webServer.Close(cleanupCtx); err != nil {
+			slog.Warn("等待云端清理任务退出失败", "error", err)
+		}
+		cancel()
 	} else {
 		ddnsEngine.Start(ctx)
 	}

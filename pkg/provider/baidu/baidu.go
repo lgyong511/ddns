@@ -7,7 +7,6 @@ import (
 	"ddns/pkg/utils"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -149,7 +148,7 @@ func (b *Baidu) do(ctx context.Context, method, path string, query url.Values, b
 		return nil, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}

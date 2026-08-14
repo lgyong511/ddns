@@ -141,12 +141,12 @@
   <dialog class="delete-dialog" id="delete-record-dialog">
     <form method="dialog">
       <p class="dialog-eyebrow">删除解析记录</p>
-      <h2>要同时删除云端记录吗？</h2>
-      <p class="dialog-copy">本地配置删除后将停止同步。云端记录可以保留，也可以一并清理。</p>
+      <h2>要尝试同时删除云端记录吗？</h2>
+      <p class="dialog-copy">本地配置会立即删除并停止同步。选择一并清理时，程序会尝试删除云端记录；如果清理失败，云端记录可能仍会保留。</p>
       <div class="dialog-actions">
         <button value="cancel" class="button">取消</button>
         <button value="local" class="button">仅删除本地</button>
-        <button value="cloud" class="button primary">本地及云端</button>
+        <button value="cloud" class="button primary">本地及云端（尝试清理）</button>
       </div>
     </form>
   </dialog>

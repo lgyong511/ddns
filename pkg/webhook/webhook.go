@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"context"
 	"ddns/pkg/config"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+const maxResponseBodyBytes = 1 << 20
 
 var (
 	httpClient = http.Client{Timeout: 5 * time.Second}
@@ -33,7 +36,7 @@ func NewWebhook(webhook *config.Webhook) *Webhook {
 	return &Webhook{webhook}
 }
 
-func (w *Webhook) Send(data *WebhookData) error {
+func (w *Webhook) Send(ctx context.Context, data *WebhookData) error {
 	var req *http.Request
 	var err error
 
@@ -48,7 +51,7 @@ func (w *Webhook) Send(data *WebhookData) error {
 			"{{Date}}", url.QueryEscape(data.Date),
 		)
 		targetURL := replacerGet.Replace(w.URL)
-		req, err = http.NewRequest(http.MethodGet, targetURL, nil)
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 		if err != nil {
 			return fmt.Errorf("创建 GET 请求失败: %w", err)
 		}
@@ -71,7 +74,7 @@ func (w *Webhook) Send(data *WebhookData) error {
 			"{{Date}}", escapeJSON(data.Date),
 		)
 		body := replacerPost.Replace(w.Body)
-		req, err = http.NewRequest(http.MethodPost, w.URL, strings.NewReader(body))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, w.URL, strings.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("创建 POST 请求失败: %w", err)
 		}
@@ -90,9 +93,12 @@ func (w *Webhook) Send(data *WebhookData) error {
 	defer resp.Body.Close()
 
 	// 修正：读取 resp.Body 而不是 req.Body
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
 	if err != nil {
 		return fmt.Errorf("读取响应内容失败: %w", err)
+	}
+	if len(respBody) > maxResponseBodyBytes {
+		return fmt.Errorf("响应内容超过 %d 字节限制", maxResponseBodyBytes)
 	}
 
 	// 校验 HTTP 状态码

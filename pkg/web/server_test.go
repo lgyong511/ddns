@@ -12,13 +12,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type fakeCloudOperator struct {
-	records []provider.Record
-	deleted []string
+	mu           sync.Mutex
+	records      []provider.Record
+	deleted      []string
+	created      []string
+	createdIDs   []string
+	deleteErr    error
+	createErr    error
+	deleteCount  int
+	failOnDelete int
+}
+
+type blockingCloudOperator struct {
+	started chan struct{}
+}
+
+func (f *blockingCloudOperator) GetAll(context.Context, string, provider.Version) ([]provider.Record, error) {
+	return nil, nil
+}
+
+func (f *blockingCloudOperator) GetSub(ctx context.Context, _ string, _ provider.Version) ([]provider.Record, error) {
+	select {
+	case f.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (f *blockingCloudOperator) Delete(context.Context, string, string) error { return nil }
+
+func (f *blockingCloudOperator) Create(context.Context, *provider.Record) (*provider.Record, error) {
+	return nil, nil
 }
 
 func (f *fakeCloudOperator) GetAll(context.Context, string, provider.Version) ([]provider.Record, error) {
@@ -26,12 +57,40 @@ func (f *fakeCloudOperator) GetAll(context.Context, string, provider.Version) ([
 }
 
 func (f *fakeCloudOperator) GetSub(context.Context, string, provider.Version) ([]provider.Record, error) {
-	return f.records, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]provider.Record(nil), f.records...), nil
 }
 
 func (f *fakeCloudOperator) Delete(_ context.Context, recordID, domain string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteCount++
+	if f.failOnDelete > 0 && f.deleteCount == f.failOnDelete {
+		return f.deleteErr
+	}
+	if f.deleteErr != nil {
+		return nil
+	}
 	f.deleted = append(f.deleted, recordID+"@"+domain)
 	return nil
+}
+
+func (f *fakeCloudOperator) Create(_ context.Context, record *provider.Record) (*provider.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	f.created = append(f.created, record.RecordId+"@"+record.DomainName)
+	f.createdIDs = append(f.createdIDs, record.RecordId)
+	return record, nil
+}
+
+func (f *fakeCloudOperator) deletedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.deleted)
 }
 
 func TestPageIncludesVersion(t *testing.T) {
@@ -85,16 +144,142 @@ webhook:
 
 func TestDeleteCloudRecordsFiltersRecordType(t *testing.T) {
 	operator := &fakeCloudOperator{records: []provider.Record{
-		{RecordId: "a-record", DomainName: "example.com", Type: "A"},
-		{RecordId: "aaaa-record", DomainName: "example.com", Type: "AAAA"},
+		{RecordId: "a-record", DomainName: "example.com", RR: "nas", Type: "A"},
+		{RecordId: "aaaa-record", DomainName: "example.com", RR: "nas", Type: "AAAA"},
 	}}
 	record := config.Record{IPVersion: provider.IPv4, SubDomains: []string{"nas.example.com"}}
 
-	if err := deleteCloudRecords(context.Background(), operator, record); err != nil {
+	if _, err := deleteCloudRecords(context.Background(), operator, record); err != nil {
 		t.Fatal(err)
 	}
 	if len(operator.deleted) != 1 || operator.deleted[0] != "a-record@example.com" {
 		t.Fatalf("deleted records = %v, want [a-record@example.com]", operator.deleted)
+	}
+}
+
+func TestDeleteCloudRecordsMatchesExactRecord(t *testing.T) {
+	operator := &fakeCloudOperator{records: []provider.Record{
+		{RecordId: "target", DomainName: "example.com", RR: "nas", Type: "A"},
+		{RecordId: "other-name", DomainName: "example.com", RR: "backup", Type: "A"},
+		{RecordId: "other-type", DomainName: "example.com", RR: "nas", Type: "AAAA"},
+	}}
+	record := config.Record{IPVersion: provider.IPv4, SubDomains: []string{"nas.example.com"}}
+
+	if _, err := deleteCloudRecords(context.Background(), operator, record); err != nil {
+		t.Fatal(err)
+	}
+	if len(operator.deleted) != 1 || operator.deleted[0] != "target@example.com" {
+		t.Fatalf("deleted records = %v, want [target@example.com]", operator.deleted)
+	}
+}
+
+func TestDeleteCloudRecordsRejectsAmbiguousMatches(t *testing.T) {
+	operator := &fakeCloudOperator{records: []provider.Record{
+		{RecordId: "first", DomainName: "example.com", RR: "nas", Type: "A"},
+		{RecordId: "second", DomainName: "example.com", RR: "nas", Type: "A"},
+	}}
+	record := config.Record{IPVersion: provider.IPv4, SubDomains: []string{"nas.example.com"}}
+
+	if _, err := deleteCloudRecords(context.Background(), operator, record); err == nil {
+		t.Fatal("deleteCloudRecords accepted ambiguous cloud records")
+	}
+	if len(operator.deleted) != 0 {
+		t.Fatalf("deleted records = %v, want no deletions", operator.deleted)
+	}
+}
+
+func TestDeleteCloudRecordsRestoresAfterPartialFailure(t *testing.T) {
+	operator := &fakeCloudOperator{
+		records: []provider.Record{
+			{RecordId: "first", DomainName: "example.com", RR: "one", Type: "A"},
+			{RecordId: "second", DomainName: "example.com", RR: "two", Type: "A"},
+		},
+		deleteErr:    fmt.Errorf("delete failed"),
+		failOnDelete: 2,
+	}
+	record := config.Record{IPVersion: provider.IPv4, SubDomains: []string{"one.example.com", "two.example.com"}}
+
+	if _, err := deleteCloudRecords(context.Background(), operator, record); err == nil {
+		t.Fatal("deleteCloudRecords accepted a failed deletion")
+	}
+	if len(operator.created) != 1 || operator.created[0] != "@example.com" {
+		t.Fatalf("created records = %v, want [@example.com]", operator.created)
+	}
+	if len(operator.createdIDs) != 1 || operator.createdIDs[0] != "" {
+		t.Fatalf("created record IDs = %v, want [empty]", operator.createdIDs)
+	}
+}
+
+func TestCloudCleanupWorkerProcessesAndStopsJobs(t *testing.T) {
+	operator := &fakeCloudOperator{records: []provider.Record{{RecordId: "record", DomainName: "example.com", RR: "nas", Type: "A"}}}
+	server, err := New(Options{CloudOperatorFactory: func(config.Provider) (CloudOperator, error) { return operator, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.cloudCleanupQueue <- cloudCleanupJob{
+		provider: config.Provider{Name: "home", Provider: "aliyun"},
+		record:   config.Record{Name: "nas", SubDomains: []string{"nas.example.com"}, IPVersion: provider.IPv4},
+	}
+	deadline := time.After(time.Second)
+	for operator.deletedCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("cleanup job was not processed")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if err := server.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServerCloseCancelsCloudCleanup(t *testing.T) {
+	operator := &blockingCloudOperator{started: make(chan struct{}, 1)}
+	server, err := New(Options{CloudOperatorFactory: func(config.Provider) (CloudOperator, error) { return operator, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.cloudCleanupQueue <- cloudCleanupJob{
+		provider: config.Provider{Name: "home", Provider: "aliyun"},
+		record:   config.Record{Name: "nas", SubDomains: []string{"nas.example.com"}, IPVersion: provider.IPv4},
+	}
+	select {
+	case <-operator.started:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebCloneConfigDeepCopiesSubDomains(t *testing.T) {
+	cfg := config.Config{Providers: []config.Provider{{Records: []config.Record{{SubDomains: []string{"nas.example.com"}}}}}}
+	clone := cloneConfig(cfg)
+	clone.Providers[0].Records[0].SubDomains[0] = "changed.example.com"
+	if cfg.Providers[0].Records[0].SubDomains[0] != "nas.example.com" {
+		t.Fatalf("source subdomain was mutated: %q", cfg.Providers[0].Records[0].SubDomains[0])
+	}
+}
+
+func TestLoginLimiterCleansExpiredStatesAndTrimsCapacity(t *testing.T) {
+	limiter := newLoginLimiter()
+	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
+	limiter.attempts["expired"] = loginAttempt{failures: 1, lastSeen: now.Add(-loginStateTTL - time.Minute)}
+	if _, locked := limiter.check("expired", now); locked {
+		t.Fatal("expired state is still active")
+	}
+	if _, ok := limiter.attempts["expired"]; ok {
+		t.Fatal("expired state was not removed")
+	}
+	for i := 0; i < loginMaxStates+1; i++ {
+		limiter.failure(fmt.Sprintf("client-%d", i), now)
+	}
+	if len(limiter.attempts) > loginMaxStates {
+		t.Fatalf("limiter state count = %d, want at most %d", len(limiter.attempts), loginMaxStates)
 	}
 }
 

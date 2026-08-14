@@ -21,7 +21,9 @@ type Provider struct {
 	//服务商CRUD接口
 	operator Operator
 	// Webhook 通知器
-	notifier *webhook.Webhook
+	notifier          *webhook.Webhook
+	notificationQueue chan webhook.WebhookData
+	notificationWG    sync.WaitGroup
 }
 
 // NewProvider 创建一个新的 Provider 实例
@@ -41,6 +43,7 @@ func NewProvider(provider *config.Provider, notifier *webhook.Webhook) (*Provide
 // Start 启动 Provider，监听所有记录的IP地址变化，并同步到DNS服务商
 func (p *Provider) Start(ctx context.Context) {
 	var wg sync.WaitGroup
+	p.startNotificationWorker(ctx)
 	//启动所有记录的获取IP地址
 	for _, record := range p.provider.Records {
 		wg.Add(1)
@@ -56,7 +59,29 @@ func (p *Provider) Start(ctx context.Context) {
 	slog.Warn("Provider 正在退出", "provider", p.provider.Name)
 
 	wg.Wait()
+	p.notificationWG.Wait()
 	slog.Warn("Provider 已退出", "provider", p.provider.Name)
+}
+
+func (p *Provider) startNotificationWorker(ctx context.Context) {
+	if p.notifier == nil {
+		return
+	}
+	p.notificationQueue = make(chan webhook.WebhookData, 64)
+	p.notificationWG.Add(1)
+	go func() {
+		defer p.notificationWG.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data := <-p.notificationQueue:
+				if err := p.notifier.Send(ctx, &data); err != nil {
+					slog.Error("发送 Webhook 通知失败", "subDomain", data.Domain, "err", err)
+				}
+			}
+		}
+	}()
 }
 
 // watchRecord 监听单个记录的IP地址变化，并同步到DNS服务商
@@ -103,7 +128,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 		logger.Error(msg)
 		//获取IP比较频繁的，连续失败5次才发送通知，避免频繁发送通知
 		if recordState.GetAddrFailCount%5 == 0 || recordState.GetAddrFailCount == 1 {
-			p.sendNotification(&webhook.WebhookData{
+			p.sendNotification(ctx, &webhook.WebhookData{
 				Provider: p.provider.Provider,
 				State:    msg,
 				Date:     time.Now().Format("2006-01-02 15:04:05"),
@@ -151,7 +176,7 @@ func (p *Provider) syncRecord(ctx context.Context, record *config.Record, record
 
 			//连续同步多次失败发送 webhook 通知，约每三次发送一次
 			if failCount == 1 || failCount%3 == 0 {
-				p.sendNotification(&webhook.WebhookData{
+				p.sendNotification(ctx, &webhook.WebhookData{
 					Domain:   subDomain,
 					OldAddr:  oldAddr.String(),
 					NewAddr:  currentAddr.String(),
@@ -215,7 +240,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 
 			logger.Info("创建记录成功", "subDomain", subDomain, "IP", currentAddr)
 			// 创建新记录成功发送 webhook 通知
-			p.sendNotification(&webhook.WebhookData{
+			p.sendNotification(ctx, &webhook.WebhookData{
 				Domain: subDomain,
 				// OldAddr:  oldAddr.String(),
 				NewAddr:  currentAddr.String(),
@@ -270,7 +295,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	}
 	if hasUpdated {
 		//更新 IP 成功发送 webhook 通知
-		p.sendNotification(&webhook.WebhookData{
+		p.sendNotification(ctx, &webhook.WebhookData{
 			Domain:   subDomain,
 			OldAddr:  resOldAddr,
 			NewAddr:  currentAddr.String(),
@@ -282,19 +307,19 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 	return nil
 }
 
-// sendNotification 封装安全的异步 Webhook 通知发送
-// 网络超时由 webhook 控制
-func (p *Provider) sendNotification(data *webhook.WebhookData) {
-	if p.notifier == nil {
+// sendNotification 将通知交给受 Provider 生命周期约束的有界队列。
+func (p *Provider) sendNotification(ctx context.Context, data *webhook.WebhookData) {
+	if p.notifier == nil || p.notificationQueue == nil || data == nil {
 		return
 	}
 
-	// 开启协程异步发送，防止 Webhook 的网络延迟阻塞 DDNS 轮询
-	go func() {
-		if err := p.notifier.Send(data); err != nil {
-			slog.Error("发送 Webhook 通知失败", "subDomain", data.Domain, "err", err)
-		}
-	}()
+	copy := *data
+	select {
+	case <-ctx.Done():
+	case p.notificationQueue <- copy:
+	default:
+		slog.Warn("Webhook 通知队列已满，丢弃新通知", "provider", p.provider.Name, "subDomain", data.Domain)
+	}
 }
 
 // logger 返回一个带有 provider 和 record 字段的 slog.Logger 实例，用于记录日志

@@ -6,7 +6,6 @@ import (
 	"ddns/pkg/utils"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -234,9 +233,12 @@ func (h *Huawei) do(ctx context.Context, action, urlStr string, body string) ([]
 	}
 
 	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("华为云 API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
 	}
 
 	return respBytes, nil

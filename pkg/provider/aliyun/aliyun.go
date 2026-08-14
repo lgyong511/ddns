@@ -6,7 +6,6 @@ import (
 	"ddns/pkg/provider"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -275,7 +274,7 @@ func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}

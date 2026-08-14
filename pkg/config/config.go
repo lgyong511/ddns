@@ -173,8 +173,14 @@ func (c *Config) Validate() error {
 		if p.Provider == "" {
 			errs = append(errs, fmt.Errorf("providers[%d].provider 不能为空", i))
 		}
+		if !validProviderTypes[p.Provider] {
+			errs = append(errs, fmt.Errorf("providers[%d].provider 无效，请填写 aliyun、baidu、dnsla、tencent、huawei 或 volcengine", i))
+		}
 		if err := validateByteLength("providers["+strconv.Itoa(i)+"].provider", p.Provider, MaxProviderTypeBytes); err != nil {
 			errs = append(errs, err)
+		}
+		if p.ForceInterval != 0 && (p.ForceInterval < 5 || p.ForceInterval > 30) {
+			errs = append(errs, fmt.Errorf("providers[%s].forceInterval 无效，请填写 5-30 分钟", p.Name))
 		}
 
 		// 检查provider是否重名
@@ -185,6 +191,7 @@ func (c *Config) Validate() error {
 
 		//检查Records
 		recordNames := make(map[string]bool)
+		domainVersions := make(map[string]bool)
 		for j, r := range p.Records {
 			// 检查record空值
 			if r.Name == "" {
@@ -195,6 +202,9 @@ func (c *Config) Validate() error {
 			}
 			if r.GetType == "" {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 不能为空", p.Name, j))
+			}
+			if !validGetTypes[r.GetType] {
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 无效，请填写 cmd、url、nic 或 duid", p.Name, j))
 			}
 			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].getType", r.GetType, MaxGetTypeBytes); err != nil {
 				errs = append(errs, err)
@@ -208,7 +218,17 @@ func (c *Config) Validate() error {
 			for _, subDomain := range r.SubDomains {
 				if err := validateDomainName(subDomain); err != nil {
 					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains: %w", p.Name, j, err))
+					continue
 				}
+				key, err := domainVersionKey(subDomain, r.IPVersion)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains: %w", p.Name, j, err))
+					continue
+				}
+				if domainVersions[key] {
+					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains 与同服务商其他记录重复: %s (IPv%d)", p.Name, j, subDomain, r.IPVersion))
+				}
+				domainVersions[key] = true
 			}
 			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].getValue", r.GetValue, maxGetValueBytes(r.GetType)); err != nil {
 				errs = append(errs, err)
@@ -218,6 +238,15 @@ func (c *Config) Validate() error {
 			}
 			if r.IPVersion != provider.IPv4 && r.IPVersion != provider.IPv6 {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ipVersion 无效，请填写 4 或 6", p.Name, j))
+			}
+			if r.TTL != 0 && (r.TTL < 1 || r.TTL > 86400) {
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ttl 无效，请填写 1-86400 秒", p.Name, j))
+			}
+			if r.Interval != 0 && (r.Interval < 10 || r.Interval > 60) {
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].interval 无效，请填写 10-60 秒", p.Name, j))
+			}
+			if r.GetType == "duid" && r.IPVersion != provider.IPv6 {
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].duid 仅支持 IPv6", p.Name, j))
 			}
 
 			// 检查record是否重名
@@ -256,6 +285,22 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+var validProviderTypes = map[string]bool{
+	"aliyun":     true,
+	"baidu":      true,
+	"dnsla":      true,
+	"tencent":    true,
+	"huawei":     true,
+	"volcengine": true,
+}
+
+var validGetTypes = map[string]bool{
+	"cmd":  true,
+	"url":  true,
+	"nic":  true,
+	"duid": true,
+}
+
 func validateByteLength(field, value string, max int) error {
 	if len(value) > max {
 		return fmt.Errorf("%s 长度不能超过 %d 字节", field, max)
@@ -279,21 +324,35 @@ func maxGetValueBytes(getType string) int {
 }
 
 func validateDomainName(value string) error {
+	_, err := normalizedDomainName(value)
+	return err
+}
+
+func domainVersionKey(domain string, version provider.Version) (string, error) {
+	normalized, err := normalizedDomainName(domain)
+	if err != nil {
+		return "", err
+	}
+	return normalized + "\x00" + strconv.Itoa(int(version)), nil
+}
+
+func normalizedDomainName(value string) (string, error) {
 	value = strings.TrimSuffix(strings.TrimSpace(value), ".")
 	if value == "" {
-		return errors.New("域名不能为空")
+		return "", errors.New("域名不能为空")
 	}
 	asciiName, err := idna.Lookup.ToASCII(value)
 	if err != nil {
-		return fmt.Errorf("域名格式无效")
+		return "", fmt.Errorf("域名格式无效")
 	}
+	asciiName = strings.ToLower(asciiName)
 	if len(asciiName) > MaxDomainBytes {
-		return fmt.Errorf("域名长度不能超过 %d 字节", MaxDomainBytes)
+		return "", fmt.Errorf("域名长度不能超过 %d 字节", MaxDomainBytes)
 	}
 	for _, label := range strings.Split(asciiName, ".") {
 		if len(label) == 0 || len(label) > MaxDomainLabelBytes {
-			return fmt.Errorf("域名标签长度不能超过 %d 字节", MaxDomainLabelBytes)
+			return "", fmt.Errorf("域名标签长度不能超过 %d 字节", MaxDomainLabelBytes)
 		}
 	}
-	return nil
+	return asciiName, nil
 }

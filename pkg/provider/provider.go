@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -32,6 +34,19 @@ var (
 		},
 	}
 )
+
+const MaxResponseBodyBytes = 1 << 20
+
+func ReadResponseBody(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, MaxResponseBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxResponseBodyBytes {
+		return nil, fmt.Errorf("response body exceeds %d bytes", MaxResponseBodyBytes)
+	}
+	return data, nil
+}
 
 // rateLimitedTransport 包装原生的 RoundTripper 以增加 API 频控/限流
 type rateLimitedTransport struct {

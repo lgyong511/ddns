@@ -1,7 +1,15 @@
 package dnsla
 
 import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
+
+	"ddns/pkg/provider"
 )
 
 func TestParseRecordListResponse(t *testing.T) {
@@ -74,4 +82,44 @@ func TestRecordTypeCode(t *testing.T) {
 	if got := recordTypeCode("AAAA"); got != 28 {
 		t.Fatalf("expected AAAA to map to 28, got %d", got)
 	}
+}
+
+func TestResolveDomainIDConcurrentAccess(t *testing.T) {
+	originalClient := provider.HTTPClient
+	provider.HTTPClient = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"code":200,"data":{"id":"domain-id"}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	defer func() { provider.HTTPClient = originalClient }()
+
+	dnsla := NewDNSLA("id", "secret")
+	const callers = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, err := dnsla.resolveDomainID(context.Background(), "example.com")
+			if err != nil {
+				errs <- err
+			} else if id != "domain-id" {
+				errs <- fmt.Errorf("domain ID = %q, want %q", id, "domain-id")
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }

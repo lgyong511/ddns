@@ -1,7 +1,6 @@
 package tencent
 
 import (
-	"bytes"
 	"context"
 	"ddns/pkg/provider"
 	"ddns/pkg/utils"
@@ -214,13 +213,15 @@ func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error
 	}
 	defer resp.Body.Close()
 
-	body := &bytes.Buffer{}
-	_, err = body.ReadFrom(resp.Body)
+	body, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("腾讯云 API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 
-	return body.Bytes(), nil
+	return body, nil
 }
 
 // addAndUpdate 添加或更新域名解析记录，处理API返回的错误

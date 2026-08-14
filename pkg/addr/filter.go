@@ -39,6 +39,11 @@ func IsPublic(addr netip.Addr) bool {
 		return false
 	}
 
+	//私网、回环、链路本地单播/组播
+	if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return false
+	}
+
 	if !addr.IsGlobalUnicast() {
 		return false
 	}
