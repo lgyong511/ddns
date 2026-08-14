@@ -29,6 +29,16 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if err := r.ParseMultipartForm(maxRequestBodyBytes); err != nil {
+		slog.Warn("Web 配置导入失败", "stage", "form", "err", err)
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			s.renderImportPage(w, r, isSetup, "导入文件超过 1 MiB 限制")
+			return
+		}
+		s.renderImportPage(w, r, isSetup, "读取导入表单失败")
+		return
+	}
 	if !isSetup && !s.validCSRF(r) {
 		http.Error(w, "CSRF token invalid", http.StatusForbidden)
 		return

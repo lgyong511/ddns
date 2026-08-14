@@ -351,7 +351,7 @@ auth:
 	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 	response := httptest.NewRecorder()
 
-	server.importConfig(response, request)
+	server.ServeHTTP(response, request)
 
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/?imported=1" {
 		t.Fatalf("response = (%d, %q), want (303, /?imported=1)", response.Code, response.Header().Get("Location"))
@@ -484,8 +484,8 @@ auth: {}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	server.importConfig(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "请选择要导入") {
-		t.Fatalf("response = (%d, %q), want missing-file error page", response.Code, response.Body.String())
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "读取导入表单失败") {
+		t.Fatalf("response = (%d, %q), want form error page", response.Code, response.Body.String())
 	}
 	updated, err := loadConfig(configPath)
 	if err != nil {
