@@ -178,6 +178,10 @@ body.logs-page .page-title {
   gap: 18px;
 }
 
+.provider-card:only-child {
+  grid-column: 1 / -1;
+}
+
 .provider-card,
 .panel,
 .webhook-card,
