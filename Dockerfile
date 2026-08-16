@@ -34,7 +34,7 @@ WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
 RUN chmod +x /app/bin/ddns
 EXPOSE 8686
-ENTRYPOINT ["/app/bin/ddns", "-web", "-p", "8686"]
+ENTRYPOINT ["/app/bin/ddns", "-web"]
 
 # 4b. 最终打包：软路由专用版（由于 Actions 矩阵已改，实际仅构建 amd64）
 FROM base-openwrt AS openwrt
@@ -42,7 +42,7 @@ WORKDIR /app
 COPY --from=builder /build/ddns /app/bin/ddns
 RUN chmod +x /app/bin/ddns
 EXPOSE 8686
-ENTRYPOINT ["/app/bin/ddns", "-web", "-p", "8686"]
+ENTRYPOINT ["/app/bin/ddns", "-web"]
 
 
 # ==============================================================================

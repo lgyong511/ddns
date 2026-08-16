@@ -445,6 +445,17 @@ button {
   font-size: 16px;
 }
 
+[data-add-record] {
+  border-color: #16a34a;
+  background: #16a34a;
+  color: white;
+}
+
+[data-add-record]:hover {
+  border-color: #15803d;
+  background: #15803d;
+}
+
 .primary,
 .button.primary {
   background: var(--primary);
@@ -621,9 +632,15 @@ textarea {
   display: grid;
   gap: 14px;
   padding: 16px;
-  border: 1px solid var(--line);
+  border: 2px solid #b8c5d8;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.record-add-bottom {
+  display: flex;
+  justify-content: flex-end;
+  margin: 14px 0 24px;
 }
 
 .record-methods {

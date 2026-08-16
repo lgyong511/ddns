@@ -40,7 +40,7 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 ./ddns
 ```
 
-该方式仍然有效：程序会按可执行文件所在目录查找 `conf.yaml`。如果使用 `go run`，可执行文件通常位于临时目录，建议使用 `-c` 显式指定配置文件路径。
+程序会按可执行文件所在目录查找 `conf.yaml`。如果使用 `go run`，可执行文件通常位于临时目录，建议使用 `-c` 显式指定配置文件路径。
 
 使用 `-web` 参数启动 Web 控制台，`-p` 参数指定端口：
 
@@ -70,6 +70,16 @@ docker run -d --name ddns --restart always \
   ghcr.io/lgyong511/ddns:latest
 ```
 
+不使用 host 网络时，通过端口映射访问 Web 控制台：
+
+```bash
+docker run -d --name ddns --restart always \
+  -p 8686:8686 \
+  ghcr.io/lgyong511/ddns:latest
+```
+
+访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。
+
 #### 运行 OpenWrt 版
 
 **说明：如果要使用 DUID 获取 IPv6 地址需要挂载 ubus，不需要时可不挂载**
@@ -82,6 +92,17 @@ docker run -d --name ddns --restart always \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
+
+不使用 host 网络时，通过端口映射访问 Web 控制台：
+
+```bash
+docker run -d --name ddns --restart always \
+  -p 8686:8686 \
+  -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
+  ghcr.io/lgyong511/ddns:latest-openwrt
+```
+
+访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。
 
 ### 4. 源码编译
 
@@ -299,9 +320,21 @@ Web 模式使用用户目录下的 `.ddns_conf.yaml` 保存配置：
 
 Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启动命令：
 
+- 使用 `--net=host` 时无需端口映射；
+- 不使用 `--net=host` 时必须添加 `-p 8686:8686`，也可以将宿主机端口改为其他值，例如 `-p 9090:8686`；
+- 如果使用网卡方式获取宿主机 IP，仍建议使用 `--net=host`。
+
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
+  ghcr.io/lgyong511/ddns:latest
+```
+
+不使用 host 网络时：
+
+```bash
+docker run -d --name ddns --restart always \
+  -p 8686:8686 \
   ghcr.io/lgyong511/ddns:latest
 ```
 

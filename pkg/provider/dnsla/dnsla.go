@@ -112,6 +112,8 @@ func (d *DNSLA) Create(ctx context.Context, record *provider.Record) (*provider.
 	}
 	if result.Data.ID != "" {
 		record.RecordId = result.Data.ID
+	} else {
+		return nil, fmt.Errorf("DNSLA Create: 创建记录失败，未返回 RecordId，err: %s", string(resp))
 	}
 	return record, nil
 }

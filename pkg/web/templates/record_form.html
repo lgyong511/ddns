@@ -31,9 +31,9 @@
       </div>
       <fieldset class="radio-grid" aria-label="获取方式">
         <legend>获取方式</legend>
+        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="url" {{if or (eq .Form.GetType "") (eq .Form.GetType "url")}}checked{{end}}> URL请求</span></label>
         <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="cmd" {{if eq .Form.GetType "cmd"}}checked{{end}}> 系统命令</span></label>
         <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="nic" {{if eq .Form.GetType "nic"}}checked{{end}}> 系统网卡</span></label>
-        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="url" {{if or (eq .Form.GetType "") (eq .Form.GetType "url")}}checked{{end}}> URL请求</span></label>
         <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="duid" {{if eq .Form.GetType "duid"}}checked{{end}}> DUID标识</span></label>
       </fieldset>
       <div class="method-help-panel"><span class="hint-icon">?</span><span data-method-help></span></div>
