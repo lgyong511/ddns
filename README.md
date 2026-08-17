@@ -31,24 +31,24 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 从 [GitHub Releases](https://github.com/lgyong511/ddns/releases) 下载对应系统和架构的已编译版本，解压后进入程序目录，并准备配置文件：
 
 ```bash
-./ddns -c conf.yaml
+./ddns -c config/config.yaml
 ```
 
-在普通命令行模式（不带 `-web`）下，如果配置文件名为 `conf.yaml` 且位于可执行文件同目录，也可以直接运行：
+不指定 `-c` 时，程序使用可执行文件同目录下的 `config/config.yaml`：
 
 ```bash
 ./ddns
 ```
 
-程序会按可执行文件所在目录查找 `conf.yaml`。如果使用 `go run`，可执行文件通常位于临时目录，建议使用 `-c` 显式指定配置文件路径。
+首次运行且默认配置不存在时，程序会创建目录和最小配置文件。如果程序目录存在有效的旧 `conf.yaml`，会自动迁移到新路径并保留旧文件。如果使用 `go run`，可执行文件通常位于临时目录，建议使用 `-c` 显式指定配置文件路径。
 
 使用 `-web` 参数启动 Web 控制台，`-p` 参数指定端口：
 
 ```bash
-./ddns -web -c conf.yaml -p 8686
+./ddns -web -c config/config.yaml -p 8686
 ```
 
-启动后访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。首次启动需要先设置登录账号和密码；Web 页面保存的配置默认位于用户目录下的 `.ddns_conf.yaml`。不指定 `-c` 时，Web 模式会尝试从可执行文件同目录的 `conf.yaml` 导入初始配置。首次设置页可导入已有 YAML 配置；登录后可在页面顶部菜单导入或导出配置。更多配置说明请参阅下方的 [Web 控制台](#web-控制台)章节。
+启动后访问 [http://127.0.0.1:8686](http://127.0.0.1:8686)。首次启动需要先设置登录账号和密码。Web 与普通命令行模式始终使用同一个配置文件，不会另行创建用户目录配置。首次设置页可导入已有 YAML 配置；登录后可在页面顶部菜单导入或导出配置。更多配置说明请参阅下方的 [Web 控制台](#web-控制台)章节。
 
 
 ### 3. Docker 运行
@@ -128,7 +128,7 @@ VERSION=v1.6.0 make build
 
 ### 5. 准备配置文件
 
-在项目根目录创建或修改 `conf.yaml`，示例：
+在程序目录的 `config/config.yaml` 创建或修改配置。源码开发时也可以将示例复制到 `config/config.yaml`，示例：
 
 ```yaml
 #通用配置
@@ -262,8 +262,10 @@ v1.6.0
 如果配置文件不在默认路径，可以通过参数指定：
 
 ```bash
-./ddns -c /path/to/conf.yaml
+./ddns -c /path/to/config.yaml
 ```
+
+`-c` 指定的相对路径按当前工作目录解析；显式指定的配置文件不存在时程序会直接报错。只有默认路径会自动初始化。
 
 ### 7. 使用 Makefile 运行
 
@@ -293,24 +295,25 @@ make run
 
 ### 配置文件说明
 
-Web 模式使用用户目录下的 `.ddns_conf.yaml` 保存配置：
+Web 模式与普通命令行模式共享启动时解析出的 `ConfigPath`：
 
-- 如果指定了 `-c`，程序会在首次启动时导入该配置文件；
-- 如果未指定 `-c`，程序会尝试导入可执行文件同目录下的 `conf.yaml`；
-- Web 页面保存配置后，后续以 `.ddns_conf.yaml` 为准；
-- 修改登录密码或 Web 页面中的配置后，程序会更新该文件，并自动重新加载配置。
+- 指定 `-c` 时使用该文件；
+- 不指定 `-c` 时使用可执行文件同目录的 `config/config.yaml`；
+- Web 保存配置会使用同目录临时文件、同步后原子替换该文件；
+- 配置管理会尽量保留原 YAML 的注释、未知字段和未修改字段格式；
+- 文件被手工修改后，Web 保存会检测到冲突并拒绝覆盖，重新加载后再保存即可。
 
 例如，使用已有配置启动 Web 控制台：
 
 ```bash
-./ddns -web -c /path/to/conf.yaml
+./ddns -web -c /path/to/config.yaml
 ```
 
 ### 通过页面导入和导出
 
 首次设置页可选择本地 `.yaml` 或 `.yml` 文件导入已有配置；登录后，页面顶部菜单也提供导入和导出入口。
 
-- 导入会覆盖当前所有 DNS 服务商和 Webhook 设置，且不会创建备份；导入页面会显示覆盖警示；
+- 导入会覆盖当前所有 DNS 服务商和 Webhook 设置，保存过程不生成备份文件；导入页面会显示覆盖警示；
 - 导入文件中的 Web 登录账号和密码哈希会被忽略，始终保留当前控制台账号。首次设置阶段导入后，仍需创建账号；
 - 导出仅包含 DNS 服务商和 Webhook，不包含 `auth`、用户名或密码哈希；导出的 YAML 可再次用于导入；
 - 导出文件包含服务商密钥和可能含敏感信息的 Webhook 内容，请妥善保存，不要提交到公开仓库；
@@ -322,7 +325,8 @@ Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启
 
 - 使用 `--net=host` 时无需端口映射；
 - 不使用 `--net=host` 时必须添加 `-p 8686:8686`，也可以将宿主机端口改为其他值，例如 `-p 9090:8686`；
-- 如果使用网卡方式获取宿主机 IP，仍建议使用 `--net=host`。
+- 如果使用网卡方式获取宿主机 IP，仍建议使用 `--net=host`；
+- 镜像内程序位于 `/usr/local/bin/ddns`，启动命令固定使用 `-c /etc/ddns/config.yaml -web`，默认端口为 `8686`。
 
 ```bash
 docker run -d --name ddns --restart always \
@@ -338,7 +342,16 @@ docker run -d --name ddns --restart always \
   ghcr.io/lgyong511/ddns:latest
 ```
 
-Docker 镜像不会使用 `-c` 导入 `/app/config/conf.yaml`，首次启动会创建空的 Web 配置。Web 页面保存的配置默认位于容器内 `/root/.ddns_conf.yaml`；如需持久化，请额外挂载容器用户目录。
+Docker 镜像默认使用 `/etc/ddns/config.yaml`。镜像内包含最小配置；如果挂载宿主机目录，挂载前请先确保宿主机的 `./config/config.yaml` 已存在，否则会覆盖镜像内的默认文件。建议使用以下方式准备并持久化配置：
+
+```bash
+mkdir -p config
+printf 'providers: []\nwebhook:\n  headers: []\n' > config/config.yaml
+docker run -d --name ddns --restart always \
+  -p 8686:8686 \
+  -v "$(pwd)/config:/etc/ddns" \
+  ghcr.io/lgyong511/ddns:latest
+```
 
 Web 控制台默认监听所有网卡。部署在公网或局域网环境时，请通过防火墙、反向代理或其他访问控制措施限制访问，并妥善保管登录密码和 DNS 服务商密钥。
 
@@ -492,5 +505,5 @@ records:
 ## 注意事项
 
 - 配置文件修改后会自动触发热加载
-- 若未显式指定配置文件，程序会优先使用可执行文件同目录下的 `conf.yaml`
+- 若未显式指定配置文件，程序使用可执行文件同目录下的 `config/config.yaml`
 - 请妥善保管 `key` 与 `Secret`

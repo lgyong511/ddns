@@ -15,7 +15,7 @@ build:
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "编译完成！"
 
-## run: 本地直接运行（默认读取根目录下的 conf.yaml）
+## run: 本地直接运行（默认读取可执行文件目录下的 config/config.yaml）
 run: build
 	@echo "正在启动 $(BINARY_NAME)..."
 	./$(BINARY_NAME)

@@ -1,161 +1,248 @@
 package config
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/spf13/viper"
 	"go.yaml.in/yaml/v3"
 )
 
-// Manager 代表配置管理器，可以添加方法来加载和验证配置
 type Manager struct {
-	// 配置管理包viper实例
-	vp *viper.Viper
-	// 加载的配置数据
-	config *Config
-	//读写锁
-	rwMutex sync.RWMutex
-	// 串行化配置文件更新和变更通知
-	opMutex sync.Mutex
-	// 监听配置文件变化的回调函数
-	callbacks []func()
-	path      string
+	config         *Config
+	document       *yaml.Node
+	fingerprint    [sha256.Size]byte
+	fingerprintSet bool
+	rwMutex        sync.RWMutex
+	opMutex        sync.Mutex
+	callbacks      []func()
+	path           string
+	watcher        *fsnotify.Watcher
+	watchDone      chan struct{}
+	watchOnce      sync.Once
+	closeOnce      sync.Once
 }
 
-// NewManager 创建一个新的配置管理器实例
 func NewManager() *Manager {
-	return &Manager{
-		vp: viper.New(),
-	}
+	return &Manager{}
 }
 
-// Load 从指定路径加载配置文件
 func (m *Manager) Load(path string) error {
-	m.path = path
-	//设置配置文件目录
-	m.vp.SetConfigFile(path)
-	//设置配置文件格式
-	m.vp.SetConfigType("yaml")
-	if err := m.Reload(); err != nil {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("配置文件路径不能为空")
+	}
+
+	m.opMutex.Lock()
+	callbacks, err := m.reloadLocked(path)
+	if err == nil {
+		m.path = path
+	}
+	m.opMutex.Unlock()
+	if err != nil {
 		return err
 	}
-	m.watchConfig()
-	return nil
+	m.notifyCallbacks(callbacks)
+	return m.startWatcher()
 }
 
-// Reload 重新读取配置文件并通知监听者。
 func (m *Manager) Reload() error {
 	m.opMutex.Lock()
-	var callbacks []func()
-	defer func() {
-		m.opMutex.Unlock()
-		m.notifyCallbacks(callbacks)
-	}()
-	if err := m.vp.ReadInConfig(); err != nil {
+	callbacks, err := m.reloadLocked(m.path)
+	m.opMutex.Unlock()
+	if err != nil {
 		return err
 	}
-	var cfg Config
-	if err := m.vp.Unmarshal(&cfg); err != nil {
-		return err
-	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("配置验证失败: %v", err)
-	}
-	callbacks = m.applyConfigLocked(&cfg)
+	m.notifyCallbacks(callbacks)
 	return nil
 }
 
-// Get 返回配置数据，禁止写操作
-// 请确保调用Load加载配置后使用
 func (m *Manager) Get() (*Config, error) {
 	m.rwMutex.RLock()
 	defer m.rwMutex.RUnlock()
 	if m.config == nil {
-		return nil, fmt.Errorf("没有配置文件，请使用Load加载！")
+		return nil, errors.New("没有配置文件，请使用Load加载")
 	}
 	return cloneConfig(m.config), nil
 }
 
-// Save 校验、持久化并发布新的配置，整个更新过程由管理器串行化。
 func (m *Manager) Save(cfg *Config) error {
-	m.opMutex.Lock()
-	var callbacks []func()
-	defer func() {
-		m.opMutex.Unlock()
-		m.notifyCallbacks(callbacks)
-	}()
 	if cfg == nil {
-		return fmt.Errorf("配置不能为空")
+		return errors.New("配置不能为空")
 	}
-	if err := cfg.Validate(); err != nil {
+	next := cloneConfig(cfg)
+	if err := next.Validate(); err != nil {
 		return fmt.Errorf("配置验证失败: %w", err)
 	}
-	data, err := yaml.Marshal(cfg)
+
+	m.opMutex.Lock()
+	callbacks, err := m.saveLocked(next)
+	m.opMutex.Unlock()
 	if err != nil {
 		return err
 	}
-	m.rwMutex.Lock()
-	if m.path == "" {
-		m.rwMutex.Unlock()
-		return fmt.Errorf("配置文件路径未设置")
-	}
-	dir := filepath.Dir(m.path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		m.rwMutex.Unlock()
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".conf-*.yaml")
-	if err != nil {
-		m.rwMutex.Unlock()
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		m.rwMutex.Unlock()
-		return err
-	}
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		m.rwMutex.Unlock()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		m.rwMutex.Unlock()
-		return err
-	}
-	if err := os.Rename(tmpName, m.path); err != nil {
-		m.rwMutex.Unlock()
-		return err
-	}
-	m.rwMutex.Unlock()
-	callbacks = m.applyConfigLocked(cfg)
+	m.notifyCallbacks(callbacks)
 	return nil
 }
 
-func (m *Manager) applyConfigLocked(cfg *Config) []func() {
+func (m *Manager) RegCallback(cb func()) {
+	if cb == nil {
+		return
+	}
 	m.rwMutex.Lock()
+	m.callbacks = append(m.callbacks, cb)
+	m.rwMutex.Unlock()
+}
+
+func (m *Manager) Close() error {
+	var err error
+	m.closeOnce.Do(func() {
+		if m.watcher == nil {
+			return
+		}
+		close(m.watchDone)
+		err = m.watcher.Close()
+	})
+	return err
+}
+
+func (m *Manager) reloadLocked(path string) ([]func(), error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("配置文件路径未设置")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	document, cfg, err := parseDocument(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("配置验证失败: %w", err)
+	}
+	fingerprint := sha256.Sum256(data)
+	m.path = path
+	m.rwMutex.Lock()
+	m.document = document
+	m.fingerprint = fingerprint
+	m.fingerprintSet = true
+	callbacks := m.applyConfigLocked(&cfg)
+	m.rwMutex.Unlock()
+	return callbacks, nil
+}
+
+func (m *Manager) saveLocked(cfg *Config) ([]func(), error) {
+	m.rwMutex.RLock()
+	path := m.path
+	document := cloneYAMLNode(m.document)
+	oldFingerprint := m.fingerprint
+	fingerprintSet := m.fingerprintSet
+	m.rwMutex.RUnlock()
+	if path == "" || document == nil || !fingerprintSet {
+		return nil, errors.New("配置文件尚未加载")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if sha256.Sum256(data) != oldFingerprint {
+		return nil, errors.New("配置文件已被外部修改，请重新加载后再保存")
+	}
+	desired, err := nodeFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	mergeYAMLNode(document, desired)
+	data, err = yaml.Marshal(document)
+	if err != nil {
+		return nil, fmt.Errorf("生成配置文件失败: %w", err)
+	}
+	if err := writeConfigFile(path, data); err != nil {
+		return nil, err
+	}
+	fingerprint := sha256.Sum256(data)
+	m.rwMutex.Lock()
+	m.document = document
+	m.fingerprint = fingerprint
+	m.fingerprintSet = true
+	callbacks := m.applyConfigLocked(cfg)
+	m.rwMutex.Unlock()
+	return callbacks, nil
+}
+
+func (m *Manager) applyConfigLocked(cfg *Config) []func() {
 	if m.config != nil && reflect.DeepEqual(m.config, cfg) {
-		m.rwMutex.Unlock()
 		return nil
 	}
 	m.config = cloneConfig(cfg)
-	callbacks := slices.Clone(m.callbacks)
-	m.rwMutex.Unlock()
-	return callbacks
+	return slices.Clone(m.callbacks)
 }
 
 func (m *Manager) notifyCallbacks(callbacks []func()) {
 	for _, cb := range callbacks {
 		cb()
+	}
+}
+
+func (m *Manager) startWatcher() error {
+	m.opMutex.Lock()
+	watchPath := m.path
+	m.opMutex.Unlock()
+	var startErr error
+	m.watchOnce.Do(func() {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			startErr = err
+			return
+		}
+		m.watcher = watcher
+		m.watchDone = make(chan struct{})
+		if err := watcher.Add(filepath.Dir(watchPath)); err != nil {
+			_ = watcher.Close()
+			m.watcher = nil
+			startErr = err
+			return
+		}
+		go m.watchConfig(watcher, watchPath, m.watchDone)
+	})
+	if m.watcher == nil {
+		if startErr != nil {
+			return fmt.Errorf("无法监听配置文件目录: %w", startErr)
+		}
+		return errors.New("无法监听配置文件目录")
+	}
+	return nil
+}
+
+func (m *Manager) watchConfig(watcher *fsnotify.Watcher, path string, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if filepath.Clean(event.Name) != filepath.Clean(path) || event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+				continue
+			}
+			if err := m.Reload(); err != nil {
+				slog.Error("热加载配置文件失败", "path", path, "err", err)
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			slog.Error("配置文件监听失败", "path", path, "err", err)
+		}
 	}
 }
 
@@ -170,37 +257,4 @@ func cloneConfig(cfg *Config) *Config {
 	}
 	clone.Webhook.Headers = slices.Clone(cfg.Webhook.Headers)
 	return &clone
-}
-
-// RegCallback 注册配置变化的回调函数
-func (m *Manager) RegCallback(cb func()) {
-	m.rwMutex.Lock()
-	defer m.rwMutex.Unlock()
-	m.callbacks = append(m.callbacks, cb)
-}
-
-// watchConfig 监听配置文件变化并自动重新加载
-func (m *Manager) watchConfig() {
-	m.vp.OnConfigChange(func(in fsnotify.Event) {
-		m.opMutex.Lock()
-		var callbacks []func()
-		defer func() {
-			m.opMutex.Unlock()
-			m.notifyCallbacks(callbacks)
-		}()
-		var cfg Config
-		if err := m.vp.Unmarshal(&cfg); err != nil {
-			// 解析失败不更新配置，保持原有配置继续使用
-			slog.Error("热加载配置文件失败！解析新配置失败！", "err", err)
-			return
-		}
-		if err := cfg.Validate(); err != nil {
-			// 验证失败不更新配置，保持原有配置继续使用
-			slog.Error("热加载配置文件失败！验证新配置失败！", "err", err)
-			return
-		}
-		callbacks = m.applyConfigLocked(&cfg)
-	})
-	// 开启配置文件修改监听
-	m.vp.WatchConfig()
 }

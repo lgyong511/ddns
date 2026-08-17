@@ -135,10 +135,10 @@ func TestPageIncludesVersion(t *testing.T) {
 	}
 }
 
-func TestPrepareConfigFileImportsValidCandidate(t *testing.T) {
+func TestPrepareDefaultFileMigratesValidLegacyConfig(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "conf.yaml")
-	target := filepath.Join(dir, ".ddns_conf.yaml")
+	target := filepath.Join(dir, "config", "config.yaml")
 	sourceData := []byte(`providers:
     - name: home
       provider: aliyun
@@ -163,7 +163,7 @@ webhook:
 	if err := os.WriteFile(source, sourceData, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := PrepareConfigFile(target, []string{source}); err != nil {
+	if err := config.PrepareDefaultFile(target, source); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(target)
@@ -325,6 +325,50 @@ auth: {}
 	server.deleteProvider(0).ServeHTTP(currentResponse, currentRequest)
 	if currentResponse.Code != http.StatusSeeOther {
 		t.Fatalf("current delete status = %d, want %d", currentResponse.Code, http.StatusSeeOther)
+	}
+}
+
+func TestServerPersistsThroughSharedConfigManager(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := `# shared config
+providers: []
+webhook:
+  headers: []
+`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := config.NewManager()
+	if err := manager.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server, err := New(Options{ConfigPath: path, Reloader: manager, ConfigStore: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close(context.Background()) })
+	cfg, err := server.readConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Webhook.URL = "https://shared.example.com"
+	if err := server.persist(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(saved), "# shared config") || !strings.Contains(string(saved), "shared.example.com") {
+		t.Fatalf("shared manager save lost expected content:\n%s", saved)
+	}
+	updated, err := manager.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Webhook.URL != cfg.Webhook.URL {
+		t.Fatalf("manager URL = %q, want %q", updated.Webhook.URL, cfg.Webhook.URL)
 	}
 }
 

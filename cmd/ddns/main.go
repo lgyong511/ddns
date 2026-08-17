@@ -46,30 +46,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	path := ""
-	if *enableWeb {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			slog.Error("无法解析用户家目录", "error", err)
+	path, explicit, err := config.ResolvePath(*configPath, exeDir)
+	if err != nil {
+		slog.Error("无法解析配置文件路径", "error", err)
+		os.Exit(1)
+	}
+	if explicit {
+		if _, err := os.Stat(path); err != nil {
+			slog.Error("显式指定的配置文件不可用", "config", path, "error", err)
 			os.Exit(1)
 		}
-		path = filepath.Join(homeDir, ".ddns_conf.yaml")
-		importCandidates := []string{*configPath, filepath.Join(exeDir, "conf.yaml")}
-		if err := web.PrepareConfigFile(path, importCandidates); err != nil {
-			slog.Error("无法初始化 Web 配置文件", "config", path, "error", err)
-			os.Exit(1)
-		}
-	} else {
-		var err error
-		path, err = resolveConfigPath(*configPath, exeDir)
-		if err != nil {
-			slog.Error("无法解析配置文件路径", "error", err)
-			os.Exit(1)
-		}
+	} else if err := config.PrepareDefaultFile(path, filepath.Join(exeDir, "conf.yaml")); err != nil {
+		slog.Error("无法初始化默认配置文件", "config", path, "error", err)
+		os.Exit(1)
 	}
 
 	// 加载配置文件
 	configManager := config.NewManager()
+	defer configManager.Close()
 	if err := configManager.Load(path); err != nil {
 		slog.Error("配置文件加载或校验失败，程序退出", "error", err)
 		os.Exit(1)
@@ -148,12 +142,10 @@ func main() {
 	slog.Info("程序已退出！！！")
 }
 
-// resolveConfigPath 确定配置文件路径，如果用户没有指定，则使用程序所在目录的 conf.yaml
+// resolveConfigPath 保留给命令行路径测试和旧调用方使用。
 func resolveConfigPath(path string, exeDir string) (string, error) {
-	if path != "" {
-		return path, nil
-	}
-	return filepath.Join(exeDir, "conf.yaml"), nil
+	resolved, _, err := config.ResolvePath(path, exeDir)
+	return resolved, err
 }
 
 func executableDir() (string, error) {

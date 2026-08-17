@@ -30,19 +30,29 @@ RUN apk add --no-cache inotifywait ca-certificates zoneinfo-all
 
 # 4a. 最终打包：通用版（支持多架构 amd64, arm64）
 FROM base-generic AS generic
-WORKDIR /app
-COPY --from=builder /build/ddns /app/bin/ddns
-RUN chmod +x /app/bin/ddns
+WORKDIR /usr/local/bin
+COPY --from=builder /build/ddns /usr/local/bin/ddns
+RUN chmod +x /usr/local/bin/ddns \
+    && mkdir -p /etc/ddns \
+    && printf 'providers: []\nwebhook:\n  headers: []\n' > /etc/ddns/config.yaml \
+    && chmod 600 /etc/ddns/config.yaml \
+    && chmod 700 /etc/ddns
+VOLUME ["/etc/ddns"]
 EXPOSE 8686
-ENTRYPOINT ["/app/bin/ddns", "-web"]
+ENTRYPOINT ["/usr/local/bin/ddns", "-c", "/etc/ddns/config.yaml", "-web"]
 
 # 4b. 最终打包：软路由专用版（由于 Actions 矩阵已改，实际仅构建 amd64）
 FROM base-openwrt AS openwrt
-WORKDIR /app
-COPY --from=builder /build/ddns /app/bin/ddns
-RUN chmod +x /app/bin/ddns
+WORKDIR /usr/local/bin
+COPY --from=builder /build/ddns /usr/local/bin/ddns
+RUN chmod +x /usr/local/bin/ddns \
+    && mkdir -p /etc/ddns \
+    && printf 'providers: []\nwebhook:\n  headers: []\n' > /etc/ddns/config.yaml \
+    && chmod 600 /etc/ddns/config.yaml \
+    && chmod 700 /etc/ddns
+VOLUME ["/etc/ddns"]
 EXPOSE 8686
-ENTRYPOINT ["/app/bin/ddns", "-web"]
+ENTRYPOINT ["/usr/local/bin/ddns", "-c", "/etc/ddns/config.yaml", "-web"]
 
 
 # ==============================================================================

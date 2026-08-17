@@ -251,8 +251,10 @@ func TestManagerCallbacksAllowReentry(t *testing.T) {
 		{
 			name: "save",
 			setup: func(manager *Manager, path string, _ *Config) error {
-				manager.path = path
-				return nil
+				if err := os.WriteFile(path, []byte("providers: []\nwebhook:\n  headers: []\n"), 0600); err != nil {
+					return err
+				}
+				return manager.Load(path)
 			},
 			call:  func(manager *Manager, cfg *Config) error { return manager.Save(cfg) },
 			retry: func(manager *Manager, cfg *Config) error { return manager.Save(cfg) },
@@ -267,10 +269,15 @@ func TestManagerCallbacksAllowReentry(t *testing.T) {
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					return err
 				}
-				manager.path = path
-				manager.vp.SetConfigFile(path)
-				manager.vp.SetConfigType("yaml")
-				return nil
+				if err := manager.Load(path); err != nil {
+					return err
+				}
+				cfg.Webhook.URL = "https://changed.example.com"
+				data, err = yaml.Marshal(cfg)
+				if err != nil {
+					return err
+				}
+				return os.WriteFile(path, data, 0600)
 			},
 			call:  func(manager *Manager, _ *Config) error { return manager.Reload() },
 			retry: func(manager *Manager, _ *Config) error { return manager.Reload() },
@@ -280,6 +287,7 @@ func TestManagerCallbacksAllowReentry(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := NewManager()
+			t.Cleanup(func() { _ = manager.Close() })
 			cfg := validConfig()
 			if err := tt.setup(manager, filepath.Join(t.TempDir(), "config.yaml"), &cfg); err != nil {
 				t.Fatal(err)
