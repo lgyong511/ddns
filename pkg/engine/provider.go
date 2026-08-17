@@ -21,9 +21,13 @@ type Provider struct {
 	//服务商CRUD接口
 	operator Operator
 	// Webhook 通知器
-	notifier          *webhook.Webhook
+	notifier          notificationSender
 	notificationQueue chan webhook.WebhookData
 	notificationWG    sync.WaitGroup
+}
+
+type notificationSender interface {
+	Send(context.Context, *webhook.WebhookData) error
 }
 
 // NewProvider 创建一个新的 Provider 实例
@@ -216,8 +220,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		return err
 	})
 
-	// 记录不存在，创建
-	if errors.Is(err, provider.ErrRecordNotFound) {
+	createRecord := func() error {
 		// 切割rr domain
 		rr, domain, err := utils.ParseDomain(subDomain)
 		if err != nil {
@@ -252,12 +255,18 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		return err
 	}
 
+	// 记录不存在，创建
+	if errors.Is(err, provider.ErrRecordNotFound) {
+		return createRecord()
+	}
+
 	// 其他错误
 	if err != nil {
 		return err
 	}
 	//全部都更新成功才发送webhook
 	hasUpdated := false
+	hasTargetRecord := false
 	// 记录dns api返回的IP地址
 	resOldAddr := ""
 	//记录存在，更新
@@ -266,6 +275,7 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		if resRecord.Type != record.IPVersion.RecordType() {
 			continue
 		}
+		hasTargetRecord = true
 		//DNS服务商返回的和本地当前IP地址相同，跳过更新
 		if resRecord.Value == currentAddr.String() {
 			logger.Debug("当前IP地址与云端一致", "subDomain", subDomain, "IP", currentAddr)
@@ -292,6 +302,9 @@ func (p *Provider) syncToProvider(ctx context.Context, subDomain string, record 
 		// 有些dns服务商相同记录可以有多条，比如：阿里云
 		hasUpdated = true
 
+	}
+	if !hasTargetRecord {
+		return createRecord()
 	}
 	if hasUpdated {
 		//更新 IP 成功发送 webhook 通知

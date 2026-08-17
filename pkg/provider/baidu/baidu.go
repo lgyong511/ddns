@@ -77,16 +77,21 @@ func (b *Baidu) Create(ctx context.Context, record *provider.Record) (*provider.
 			ID       string `json:"id"`
 		} `json:"result"`
 	}
-	if err := json.Unmarshal(resp, &result); err == nil {
-		if result.RecordID != "" {
-			record.RecordId = result.RecordID
-		} else if result.ID != "" {
-			record.RecordId = result.ID
-		} else if result.Result.RecordID != "" {
-			record.RecordId = result.Result.RecordID
-		} else {
-			record.RecordId = result.Result.ID
-		}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("Baidu Create: 响应解析失败: %w", err)
+	}
+	switch {
+	case result.RecordID != "":
+		record.RecordId = result.RecordID
+	case result.ID != "":
+		record.RecordId = result.ID
+	case result.Result.RecordID != "":
+		record.RecordId = result.Result.RecordID
+	default:
+		record.RecordId = result.Result.ID
+	}
+	if record.RecordId == "" {
+		return nil, fmt.Errorf("Baidu Create: 响应未返回 RecordId，API返回: %s", provider.ResponseBodySummary(resp, false))
 	}
 	return record, nil
 }
@@ -148,12 +153,16 @@ func (b *Baidu) do(ctx context.Context, method, path string, query url.Values, b
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseSummary, err := provider.ReadErrorResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("百度云 API 返回 HTTP %d: %s", resp.StatusCode, responseSummary)
+	}
 	responseBody, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("百度云 API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return responseBody, nil
 }

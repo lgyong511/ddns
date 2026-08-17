@@ -15,6 +15,7 @@
     {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
     <form class="panel" method="post" action="{{.Action}}">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="configVersion" value="{{.ConfigVersion}}">
       <div class="form-row two">
         <label>记录名称<input name="name" maxlength="64" value="{{.Form.Name}}" required placeholder="如 nas_ipv6"></label>
         <label>子域名<input name="subDomains" maxlength="4096" value="{{.Form.SubDomains}}" required placeholder="nas.example.com, home.example.com"></label>

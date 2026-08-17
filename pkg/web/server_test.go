@@ -35,6 +35,13 @@ type blockingCloudOperator struct {
 	started chan struct{}
 }
 
+type canceledRollbackOperator struct {
+	records       []provider.Record
+	cancel        context.CancelFunc
+	deleteCalls   int
+	rollbackCalls int
+}
+
 func (f *blockingCloudOperator) GetAll(context.Context, string, provider.Version) ([]provider.Record, error) {
 	return nil, nil
 }
@@ -52,6 +59,31 @@ func (f *blockingCloudOperator) Delete(context.Context, string, string) error { 
 
 func (f *blockingCloudOperator) Create(context.Context, *provider.Record) (*provider.Record, error) {
 	return nil, nil
+}
+
+func (f *canceledRollbackOperator) GetAll(context.Context, string, provider.Version) ([]provider.Record, error) {
+	return nil, nil
+}
+
+func (f *canceledRollbackOperator) GetSub(context.Context, string, provider.Version) ([]provider.Record, error) {
+	return f.records, nil
+}
+
+func (f *canceledRollbackOperator) Delete(context.Context, string, string) error {
+	f.deleteCalls++
+	if f.deleteCalls == 2 {
+		f.cancel()
+		return context.Canceled
+	}
+	return nil
+}
+
+func (f *canceledRollbackOperator) Create(ctx context.Context, record *provider.Record) (*provider.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.rollbackCalls++
+	return record, nil
 }
 
 func (f *fakeCloudOperator) GetAll(context.Context, string, provider.Version) ([]provider.Record, error) {
@@ -212,6 +244,90 @@ func TestDeleteCloudRecordsRestoresAfterPartialFailure(t *testing.T) {
 	}
 }
 
+func TestDeleteCloudRecordsRollsBackWithCanceledDeleteContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	operator := &canceledRollbackOperator{
+		records: []provider.Record{
+			{RecordId: "first", DomainName: "example.com", RR: "one", Type: "A"},
+			{RecordId: "second", DomainName: "example.com", RR: "two", Type: "A"},
+		},
+		cancel: cancel,
+	}
+	record := config.Record{IPVersion: provider.IPv4, SubDomains: []string{"one.example.com", "two.example.com"}}
+
+	err := func() error {
+		_, err := deleteCloudRecords(ctx, operator, record)
+		return err
+	}()
+	if err == nil || !strings.Contains(err.Error(), "已删除 1 条，已尽力恢复基础记录；Provider 专属属性可能未保留") {
+		t.Fatalf("deleteCloudRecords() error = %v, want best-effort restoration warning", err)
+	}
+	if operator.rollbackCalls != 1 {
+		t.Fatalf("rollback calls = %d, want 1", operator.rollbackCalls)
+	}
+}
+
+func TestDeleteProviderRejectsStaleConfigVersion(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers:
+  - name: first
+    provider: aliyun
+    keyId: id
+    keySecret: secret
+    forceInterval: 5
+    records: []
+  - name: second
+    provider: aliyun
+    keyId: id
+    keySecret: secret
+    forceInterval: 5
+    records: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`)
+	token, csrf, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := server.readConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := versionConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	staleRequest := httptest.NewRequest(http.MethodPost, "/providers/0/delete", strings.NewReader(url.Values{"csrf": {csrf}, "configVersion": {"stale"}}.Encode()))
+	staleRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	staleRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	staleResponse := httptest.NewRecorder()
+	server.deleteProvider(0).ServeHTTP(staleResponse, staleRequest)
+	if staleResponse.Code != http.StatusConflict {
+		t.Fatalf("stale delete status = %d, want %d", staleResponse.Code, http.StatusConflict)
+	}
+
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Providers) != 2 {
+		t.Fatalf("stale delete changed providers: %d", len(updated.Providers))
+	}
+
+	currentRequest := httptest.NewRequest(http.MethodPost, "/providers/0/delete", strings.NewReader(url.Values{"csrf": {csrf}, "configVersion": {version}}.Encode()))
+	currentRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	currentRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	currentResponse := httptest.NewRecorder()
+	server.deleteProvider(0).ServeHTTP(currentResponse, currentRequest)
+	if currentResponse.Code != http.StatusSeeOther {
+		t.Fatalf("current delete status = %d, want %d", currentResponse.Code, http.StatusSeeOther)
+	}
+}
+
 func TestCloudCleanupWorkerProcessesAndStopsJobs(t *testing.T) {
 	operator := &fakeCloudOperator{records: []provider.Record{{RecordId: "record", DomainName: "example.com", RR: "nas", Type: "A"}}}
 	server, err := New(Options{CloudOperatorFactory: func(config.Provider) (CloudOperator, error) { return operator, nil }})
@@ -236,6 +352,104 @@ func TestCloudCleanupWorkerProcessesAndStopsJobs(t *testing.T) {
 	}
 }
 
+func TestDeleteRecordPersistsThenEnqueuesCloudCleanup(t *testing.T) {
+	configData := `providers:
+  - name: home
+    provider: aliyun
+    keyId: id
+    keySecret: secret
+    forceInterval: 5
+    records:
+      - name: nas
+        subDomains: [nas.example.com]
+        ipVersion: 4
+        ttl: 600
+        getType: url
+        getValue: https://example.com
+        interval: 30
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	operator := &fakeCloudOperator{records: []provider.Record{{RecordId: "record", DomainName: "example.com", RR: "nas", Type: "A"}}}
+	server, err := New(Options{
+		ConfigPath: configPath,
+		CloudOperatorFactory: func(config.Provider) (CloudOperator, error) {
+			return operator, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close(context.Background()) })
+
+	token, csrf, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := server.readConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configVersion, err := versionConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"csrf":          {csrf},
+		"configVersion": {configVersion},
+		"deleteCloud":   {"true"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/providers/0/records/0/delete", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+	server.deleteRecord(0, 0).ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("delete status = %d, want %d", response.Code, http.StatusSeeOther)
+	}
+
+	persisted, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Providers[0].Records) != 0 {
+		t.Fatal("record was not removed from local configuration")
+	}
+	deadline := time.After(time.Second)
+	for operator.deletedCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("cloud cleanup was not enqueued after local persistence")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+func TestEnqueueCloudCleanupDropsFullOrClosedQueue(t *testing.T) {
+	server := &Server{cloudCleanupQueue: make(chan cloudCleanupJob, 1)}
+	job := cloudCleanupJob{provider: config.Provider{Name: "home"}, record: config.Record{Name: "nas"}}
+	server.cloudCleanupQueue <- job
+	server.enqueueCloudCleanup(job)
+	if len(server.cloudCleanupQueue) != 1 {
+		t.Fatalf("full queue length = %d, want 1", len(server.cloudCleanupQueue))
+	}
+
+	server.cloudCleanupClosed = true
+	<-server.cloudCleanupQueue
+	server.enqueueCloudCleanup(job)
+	if len(server.cloudCleanupQueue) != 0 {
+		t.Fatalf("closed queue length = %d, want 0", len(server.cloudCleanupQueue))
+	}
+}
+
 func TestServerCloseCancelsCloudCleanup(t *testing.T) {
 	operator := &blockingCloudOperator{started: make(chan struct{}, 1)}
 	server, err := New(Options{CloudOperatorFactory: func(config.Provider) (CloudOperator, error) { return operator, nil }})
@@ -255,6 +469,27 @@ func TestServerCloseCancelsCloudCleanup(t *testing.T) {
 	defer cancel()
 	if err := server.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServerCloseCancelsLogStream(t *testing.T) {
+	server, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamDone := make(chan struct{})
+	go func() {
+		server.logsStream(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/logs/stream", nil))
+		close(streamDone)
+	}()
+
+	if err := server.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-streamDone:
+	case <-time.After(time.Second):
+		t.Fatal("log stream did not exit after server close")
 	}
 }
 

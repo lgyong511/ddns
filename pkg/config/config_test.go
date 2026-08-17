@@ -1,8 +1,12 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"ddns/pkg/provider"
 
@@ -173,6 +177,30 @@ func TestValidateDomainNameRejectsOverlongName(t *testing.T) {
 	}
 }
 
+func TestConfigValidateNormalizesSubDomains(t *testing.T) {
+	cfg := validConfig()
+	cfg.Providers[0].Records[0].SubDomains = []string{" WWW.Example.COM. ", "例子.测试"}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"www.example.com", "xn--fsqu00a.xn--0zwm56d"}
+	for index, domain := range want {
+		if got := cfg.Providers[0].Records[0].SubDomains[index]; got != domain {
+			t.Fatalf("subdomain = %q, want %q", got, domain)
+		}
+	}
+
+	data, err := yaml.Marshal(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "WWW.Example.COM.") || strings.Contains(text, "例子.测试") {
+		t.Fatalf("marshaled config contains unnormalized domains:\n%s", text)
+	}
+}
+
 func TestConfigValidateRejectsDuplicateDomainAndVersion(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -210,5 +238,76 @@ func TestCloneConfigDeepCopiesSubDomains(t *testing.T) {
 
 	if cfg.Providers[0].Records[0].SubDomains[0] != "nas.example.com" {
 		t.Fatalf("source subdomain was mutated: %q", cfg.Providers[0].Records[0].SubDomains[0])
+	}
+}
+
+func TestManagerCallbacksAllowReentry(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*Manager, string, *Config) error
+		call  func(*Manager, *Config) error
+		retry func(*Manager, *Config) error
+	}{
+		{
+			name: "save",
+			setup: func(manager *Manager, path string, _ *Config) error {
+				manager.path = path
+				return nil
+			},
+			call:  func(manager *Manager, cfg *Config) error { return manager.Save(cfg) },
+			retry: func(manager *Manager, cfg *Config) error { return manager.Save(cfg) },
+		},
+		{
+			name: "reload",
+			setup: func(manager *Manager, path string, cfg *Config) error {
+				data, err := yaml.Marshal(cfg)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					return err
+				}
+				manager.path = path
+				manager.vp.SetConfigFile(path)
+				manager.vp.SetConfigType("yaml")
+				return nil
+			},
+			call:  func(manager *Manager, _ *Config) error { return manager.Reload() },
+			retry: func(manager *Manager, _ *Config) error { return manager.Reload() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := NewManager()
+			cfg := validConfig()
+			if err := tt.setup(manager, filepath.Join(t.TempDir(), "config.yaml"), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			var once sync.Once
+			callbackDone := make(chan error, 1)
+			manager.RegCallback(func() {
+				once.Do(func() { callbackDone <- tt.retry(manager, &cfg) })
+			})
+
+			callDone := make(chan error, 1)
+			go func() { callDone <- tt.call(manager, &cfg) }()
+			select {
+			case err := <-callDone:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("configuration update deadlocked")
+			}
+			select {
+			case err := <-callbackDone:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("reentrant callback did not finish")
+			}
+		})
 	}
 }

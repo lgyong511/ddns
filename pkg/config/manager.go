@@ -53,7 +53,11 @@ func (m *Manager) Load(path string) error {
 // Reload 重新读取配置文件并通知监听者。
 func (m *Manager) Reload() error {
 	m.opMutex.Lock()
-	defer m.opMutex.Unlock()
+	var callbacks []func()
+	defer func() {
+		m.opMutex.Unlock()
+		m.notifyCallbacks(callbacks)
+	}()
 	if err := m.vp.ReadInConfig(); err != nil {
 		return err
 	}
@@ -64,7 +68,7 @@ func (m *Manager) Reload() error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("配置验证失败: %v", err)
 	}
-	m.applyConfigLocked(&cfg)
+	callbacks = m.applyConfigLocked(&cfg)
 	return nil
 }
 
@@ -82,7 +86,11 @@ func (m *Manager) Get() (*Config, error) {
 // Save 校验、持久化并发布新的配置，整个更新过程由管理器串行化。
 func (m *Manager) Save(cfg *Config) error {
 	m.opMutex.Lock()
-	defer m.opMutex.Unlock()
+	var callbacks []func()
+	defer func() {
+		m.opMutex.Unlock()
+		m.notifyCallbacks(callbacks)
+	}()
 	if cfg == nil {
 		return fmt.Errorf("配置不能为空")
 	}
@@ -129,19 +137,23 @@ func (m *Manager) Save(cfg *Config) error {
 		return err
 	}
 	m.rwMutex.Unlock()
-	m.applyConfigLocked(cfg)
+	callbacks = m.applyConfigLocked(cfg)
 	return nil
 }
 
-func (m *Manager) applyConfigLocked(cfg *Config) {
+func (m *Manager) applyConfigLocked(cfg *Config) []func() {
 	m.rwMutex.Lock()
 	if m.config != nil && reflect.DeepEqual(m.config, cfg) {
 		m.rwMutex.Unlock()
-		return
+		return nil
 	}
 	m.config = cloneConfig(cfg)
 	callbacks := slices.Clone(m.callbacks)
 	m.rwMutex.Unlock()
+	return callbacks
+}
+
+func (m *Manager) notifyCallbacks(callbacks []func()) {
 	for _, cb := range callbacks {
 		cb()
 	}
@@ -171,7 +183,11 @@ func (m *Manager) RegCallback(cb func()) {
 func (m *Manager) watchConfig() {
 	m.vp.OnConfigChange(func(in fsnotify.Event) {
 		m.opMutex.Lock()
-		defer m.opMutex.Unlock()
+		var callbacks []func()
+		defer func() {
+			m.opMutex.Unlock()
+			m.notifyCallbacks(callbacks)
+		}()
 		var cfg Config
 		if err := m.vp.Unmarshal(&cfg); err != nil {
 			// 解析失败不更新配置，保持原有配置继续使用
@@ -183,7 +199,7 @@ func (m *Manager) watchConfig() {
 			slog.Error("热加载配置文件失败！验证新配置失败！", "err", err)
 			return
 		}
-		m.applyConfigLocked(&cfg)
+		callbacks = m.applyConfigLocked(&cfg)
 	})
 	// 开启配置文件修改监听
 	m.vp.WatchConfig()

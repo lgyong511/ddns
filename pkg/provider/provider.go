@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -35,17 +36,59 @@ var (
 	}
 )
 
-const MaxResponseBodyBytes = 1 << 20
+const (
+	MaxResponseBodyBytes      = 1 << 20
+	MaxErrorResponseBodyBytes = 8 << 10
+)
 
 func ReadResponseBody(body io.Reader) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(body, MaxResponseBodyBytes+1))
+	data, truncated, err := readResponseBody(body, MaxResponseBodyBytes)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > MaxResponseBodyBytes {
+	if truncated {
 		return nil, fmt.Errorf("response body exceeds %d bytes", MaxResponseBodyBytes)
 	}
 	return data, nil
+}
+
+func ReadErrorResponseBody(body io.Reader) (string, error) {
+	data, truncated, err := readResponseBody(body, MaxErrorResponseBodyBytes)
+	if err != nil {
+		return "", err
+	}
+	return ResponseBodySummary(data, truncated), nil
+}
+
+func ResponseBodySummary(body []byte, truncated bool) string {
+	if len(body) > MaxErrorResponseBodyBytes {
+		body = body[:MaxErrorResponseBodyBytes]
+		truncated = true
+	}
+	summary := ErrorSummary(string(body))
+	if truncated {
+		return summary + " [truncated]"
+	}
+	return summary
+}
+
+func ErrorSummary(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= MaxErrorResponseBodyBytes {
+		return value
+	}
+	return value[:MaxErrorResponseBodyBytes] + " [truncated]"
+}
+
+func readResponseBody(body io.Reader, limit int) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, int64(limit)+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) <= limit {
+		return data, false, nil
+	}
+	return data[:limit], true, nil
 }
 
 // rateLimitedTransport 包装原生的 RoundTripper 以增加 API 频控/限流

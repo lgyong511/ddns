@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"ddns/pkg/config"
 )
@@ -86,6 +87,37 @@ func TestSendRejectsNonSuccessOversizeAndCanceledContext(t *testing.T) {
 				t.Fatal("Send() succeeded")
 			}
 		})
+	}
+}
+
+func TestSendCancelsInFlightRequest(t *testing.T) {
+	originalClient := httpClient
+	defer func() { httpClient = originalClient }()
+	started := make(chan struct{}, 1)
+	httpClient = http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		started <- struct{}{}
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- NewWebhook(&config.Webhook{URL: "https://example.com"}).Send(ctx, &WebhookData{})
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach the HTTP transport")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Send() succeeded after cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Send() did not return after cancellation")
 	}
 }
 

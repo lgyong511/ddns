@@ -13,6 +13,8 @@ import (
 	"ddns/pkg/utils"
 )
 
+const cloudRollbackTimeout = 5 * time.Second
+
 func deleteCloudRecordsWithRetry(ctx context.Context, operator CloudOperator, record config.Record, retries int, interval time.Duration) error {
 	var err error
 	for attempt := 0; attempt <= retries; attempt++ {
@@ -69,23 +71,30 @@ func deleteCloudRecords(ctx context.Context, operator CloudOperator, record conf
 	}
 	for _, item := range deletions {
 		if err := operator.Delete(ctx, item.record.RecordId, item.record.DomainName); err != nil {
-			if rollbackErr := restoreCloudRecords(ctx, operator, deleted); rollbackErr != nil {
-				return nil, fmt.Errorf("删除云端记录 %q 失败: %w（回滚失败: %v）", item.subDomain, err, rollbackErr)
+			deletedCount := len(deleted)
+			slog.Warn("云端记录部分删除，开始尽力恢复基础记录", "failedSubDomain", item.subDomain, "deletedCount", deletedCount, "err", err)
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cloudRollbackTimeout)
+			restoreErr := bestEffortRestoreCloudRecords(rollbackCtx, operator, deleted)
+			cancel()
+			if restoreErr != nil {
+				slog.Error("云端记录部分删除，尽力恢复基础记录失败", "failedSubDomain", item.subDomain, "deletedCount", deletedCount, "err", restoreErr)
+				return nil, fmt.Errorf("删除云端记录 %q 失败，已删除 %d 条且尽力恢复基础记录失败: %w", item.subDomain, deletedCount, errors.Join(err, restoreErr))
 			}
-			return nil, fmt.Errorf("删除云端记录 %q 失败: %w", item.subDomain, err)
+			slog.Info("云端记录部分删除，已尽力恢复基础记录", "failedSubDomain", item.subDomain, "deletedCount", deletedCount)
+			return nil, fmt.Errorf("删除云端记录 %q 失败，已删除 %d 条，已尽力恢复基础记录；Provider 专属属性可能未保留: %w", item.subDomain, deletedCount, err)
 		}
 		deleted = append(deleted, item.record)
 	}
 	return deleted, nil
 }
 
-func restoreCloudRecords(ctx context.Context, operator CloudOperator, records []provider.Record) error {
+func bestEffortRestoreCloudRecords(ctx context.Context, operator CloudOperator, records []provider.Record) error {
 	var restoreErr error
 	for i := len(records) - 1; i >= 0; i-- {
 		record := records[i]
 		record.RecordId = ""
 		if _, err := operator.Create(ctx, &record); err != nil {
-			restoreErr = errors.Join(restoreErr, fmt.Errorf("恢复云端记录失败: %w", err))
+			restoreErr = errors.Join(restoreErr, fmt.Errorf("尽力恢复云端基础记录失败: %w", err))
 		}
 	}
 	return restoreErr

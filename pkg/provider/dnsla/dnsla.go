@@ -102,18 +102,20 @@ func (d *DNSLA) Create(ctx context.Context, record *provider.Record) (*provider.
 	if err != nil {
 		return nil, err
 	}
-	var result struct {
-		Data struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	result, err := parseSuccessfulResponse(resp)
+	if err != nil {
+		return nil, fmt.Errorf("DNSLA Create: %w", err)
 	}
-	if err := json.Unmarshal(resp, &result); err != nil {
+	var data struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(result.Data, &data); err != nil {
 		return nil, fmt.Errorf("DNSLA Create: 响应解析失败: %w", err)
 	}
-	if result.Data.ID != "" {
-		record.RecordId = result.Data.ID
+	if data.ID != "" {
+		record.RecordId = data.ID
 	} else {
-		return nil, fmt.Errorf("DNSLA Create: 创建记录失败，未返回 RecordId，err: %s", string(resp))
+		return nil, fmt.Errorf("DNSLA Create: 创建记录失败，未返回 RecordId，err: %s", provider.ResponseBodySummary(resp, false))
 	}
 	return record, nil
 }
@@ -132,8 +134,14 @@ func (d *DNSLA) Update(ctx context.Context, record *provider.Record) error {
 		"data": record.Value,
 		"ttl":  record.TTL,
 	}
-	_, err := d.do(ctx, http.MethodPut, "/record", nil, payload)
-	return err
+	resp, err := d.do(ctx, http.MethodPut, "/record", nil, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := parseSuccessfulResponse(resp); err != nil {
+		return fmt.Errorf("DNSLA Update: %w", err)
+	}
+	return nil
 }
 
 func (d *DNSLA) Delete(ctx context.Context, recordID, domain string) error {
@@ -142,8 +150,14 @@ func (d *DNSLA) Delete(ctx context.Context, recordID, domain string) error {
 	}
 	query := url.Values{}
 	query.Set("id", recordID)
-	_, err := d.do(ctx, http.MethodDelete, "/record", query, nil)
-	return err
+	resp, err := d.do(ctx, http.MethodDelete, "/record", query, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := parseSuccessfulResponse(resp); err != nil {
+		return fmt.Errorf("DNSLA Delete: %w", err)
+	}
+	return nil
 }
 
 func (d *DNSLA) do(ctx context.Context, method, path string, query url.Values, payload any) ([]byte, error) {
@@ -176,12 +190,16 @@ func (d *DNSLA) do(ctx context.Context, method, path string, query url.Values, p
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseSummary, err := provider.ReadErrorResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("DNSLA API 返回 HTTP %d: %s", resp.StatusCode, responseSummary)
+	}
 	responseBody, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("DNSLA API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return responseBody, nil
 }
@@ -259,6 +277,26 @@ func parseDomainIDResponse(body []byte) (string, error) {
 		return response.Data.Domain, nil
 	}
 	return "", fmt.Errorf("DNSLA 未在响应中找到域名 ID")
+}
+
+type apiResponse struct {
+	Code int             `json:"code"`
+	Msg  string          `json:"msg"`
+	Data json.RawMessage `json:"data"`
+}
+
+func parseSuccessfulResponse(body []byte) (apiResponse, error) {
+	var response apiResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return apiResponse{}, fmt.Errorf("DNSLA 响应解析失败: %w", err)
+	}
+	if response.Code != http.StatusOK {
+		if response.Msg != "" {
+			return apiResponse{}, fmt.Errorf("DNSLA API 返回业务错误: code=%d, msg=%s", response.Code, provider.ErrorSummary(response.Msg))
+		}
+		return apiResponse{}, fmt.Errorf("DNSLA API 返回业务错误: code=%d", response.Code)
+	}
+	return response, nil
 }
 
 func recordTypeCode(recordType string) int {

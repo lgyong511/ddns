@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"ddns/pkg/provider"
 	"ddns/pkg/version"
 
+	"go.yaml.in/yaml/v3"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -148,7 +150,7 @@ func (s *Server) runCloudCleanup(job cloudCleanupJob) {
 	slog.Info("云端解析记录删除成功", "provider", job.provider.Name, "record", job.record.Name)
 }
 
-// Close 取消后台云端清理并等待其退出。
+// Close cancels the server lifecycle and waits for background cleanup to exit.
 func (s *Server) Close(ctx context.Context) error {
 	s.closeOnce.Do(func() {
 		s.cloudCleanupMu.Lock()
@@ -402,7 +404,12 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "error.html", s.page(r, "配置管理", map[string]any{"Error": err.Error()}))
 		return
 	}
-	s.render(w, "home.html", s.page(r, "配置管理", map[string]any{"Config": cfg, "Imported": importSuccess(r)}))
+	configVersion, err := versionConfig(cfg)
+	if err != nil {
+		s.renderError(w, r, err)
+		return
+	}
+	s.render(w, "home.html", s.page(r, "配置管理", map[string]any{"Config": cfg, "ConfigVersion": configVersion, "Imported": importSuccess(r)}))
 }
 
 func (s *Server) providerForm(idx int) http.HandlerFunc {
@@ -413,6 +420,11 @@ func (s *Server) providerForm(idx int) http.HandlerFunc {
 			return
 		}
 		form := providerForm{Name: "", Provider: "", ForceInterval: "", Records: []recordForm{{IPVersion: "4", GetType: "url"}}}
+		configVersion, err := versionConfig(cfg)
+		if err != nil {
+			s.renderError(w, r, err)
+			return
+		}
 		title := "创建DDNS配置"
 		action := "/providers"
 		if idx >= 0 {
@@ -426,7 +438,7 @@ func (s *Server) providerForm(idx int) http.HandlerFunc {
 			action = fmt.Sprintf("/providers/%d", idx)
 		}
 		nics, _ := nicOptions()
-		s.render(w, "provider_form.html", s.page(r, title, map[string]any{"Form": form, "Action": action, "IsEdit": idx >= 0, "NICs": nics}))
+		s.render(w, "provider_form.html", s.page(r, title, map[string]any{"Form": form, "Action": action, "IsEdit": idx >= 0, "NICs": nics, "ConfigVersion": configVersion}))
 	}
 }
 
@@ -441,6 +453,9 @@ func (s *Server) saveProvider(idx int) http.HandlerFunc {
 		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
+			return
+		}
+		if idx >= 0 && !s.matchesConfigVersion(w, r, cfg) {
 			return
 		}
 		p, err := parseProvider(r)
@@ -492,6 +507,9 @@ func (s *Server) deleteProvider(idx int) http.HandlerFunc {
 			s.renderError(w, r, err)
 			return
 		}
+		if !s.matchesConfigVersion(w, r, cfg) {
+			return
+		}
 		if idx < 0 || idx >= len(cfg.Providers) {
 			http.NotFound(w, r)
 			return
@@ -517,6 +535,11 @@ func (s *Server) recordForm(pIdx, rIdx int) http.HandlerFunc {
 			return
 		}
 		form := recordForm{IPVersion: "4", TTL: "", Interval: "", GetType: "url"}
+		configVersion, err := versionConfig(cfg)
+		if err != nil {
+			s.renderError(w, r, err)
+			return
+		}
 		title := "新增解析记录"
 		action := fmt.Sprintf("/providers/%d/records", pIdx)
 		if rIdx >= 0 {
@@ -534,7 +557,7 @@ func (s *Server) recordForm(pIdx, rIdx int) http.HandlerFunc {
 			action = fmt.Sprintf("/providers/%d/records/%d", pIdx, rIdx)
 		}
 		nics, _ := nicOptions()
-		s.render(w, "record_form.html", s.page(r, title, map[string]any{"Form": form, "Action": action, "NICs": nics}))
+		s.render(w, "record_form.html", s.page(r, title, map[string]any{"Form": form, "Action": action, "NICs": nics, "ConfigVersion": configVersion}))
 	}
 }
 
@@ -549,6 +572,9 @@ func (s *Server) saveRecord(pIdx, rIdx int) http.HandlerFunc {
 		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
+			return
+		}
+		if !s.matchesConfigVersion(w, r, cfg) {
 			return
 		}
 		if pIdx < 0 || pIdx >= len(cfg.Providers) {
@@ -588,6 +614,9 @@ func (s *Server) deleteRecord(pIdx, rIdx int) http.HandlerFunc {
 		cfg, err := s.readConfig()
 		if err != nil {
 			s.renderError(w, r, err)
+			return
+		}
+		if !s.matchesConfigVersion(w, r, cfg) {
 			return
 		}
 		if pIdx < 0 || pIdx >= len(cfg.Providers) || rIdx < 0 || rIdx >= len(cfg.Providers[pIdx].Records) {
@@ -689,6 +718,8 @@ func (s *Server) logsStream(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	for {
 		select {
+		case <-s.cloudCleanupCtx.Done():
+			return
 		case line := <-ch:
 			fmt.Fprintf(w, "data: %s\n\n", strings.ReplaceAll(line, "\n", " "))
 			flusher.Flush()
@@ -740,6 +771,28 @@ func (s *Server) validCSRF(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(csrf), []byte(r.FormValue("csrf"))) == 1
 }
 
+func versionConfig(cfg config.Config) (string, error) {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("生成配置版本失败: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func (s *Server) matchesConfigVersion(w http.ResponseWriter, r *http.Request, cfg config.Config) bool {
+	want, err := versionConfig(cfg)
+	if err != nil {
+		s.renderError(w, r, err)
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(r.FormValue("configVersion")), []byte(want)) != 1 {
+		http.Error(w, "配置已被其他页面修改，请刷新后重试", http.StatusConflict)
+		return false
+	}
+	return true
+}
+
 func (s *Server) page(r *http.Request, title string, data map[string]any) map[string]any {
 	if data == nil {
 		data = map[string]any{}
@@ -776,7 +829,7 @@ func (s *Server) renderProviderError(w http.ResponseWriter, r *http.Request, idx
 	if idx >= 0 {
 		action = fmt.Sprintf("/providers/%d", idx)
 	}
-	s.render(w, "provider_form.html", s.page(r, "服务商", map[string]any{"Form": form, "Action": action, "IsEdit": idx >= 0, "Error": err.Error()}))
+	s.render(w, "provider_form.html", s.page(r, "服务商", map[string]any{"Form": form, "Action": action, "IsEdit": idx >= 0, "ConfigVersion": r.FormValue("configVersion"), "Error": err.Error()}))
 }
 
 func (s *Server) renderRecordError(w http.ResponseWriter, r *http.Request, pIdx, rIdx int, err error) {
@@ -786,7 +839,7 @@ func (s *Server) renderRecordError(w http.ResponseWriter, r *http.Request, pIdx,
 		action = fmt.Sprintf("/providers/%d/records/%d", pIdx, rIdx)
 	}
 	nics, _ := nicOptions()
-	s.render(w, "record_form.html", s.page(r, "解析记录", map[string]any{"Form": form, "Action": action, "NICs": nics, "Error": err.Error()}))
+	s.render(w, "record_form.html", s.page(r, "解析记录", map[string]any{"Form": form, "Action": action, "NICs": nics, "ConfigVersion": r.FormValue("configVersion"), "Error": err.Error()}))
 }
 
 type providerForm struct {

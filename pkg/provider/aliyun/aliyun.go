@@ -120,6 +120,9 @@ func (a *Aliyun) GetSub(ctx context.Context, subdomain string, v provider.Versio
 // ctx: 上下文，用于控制超时和取消
 // Record: 记录信息，必传RecordID、RR、Type、Value
 func (a *Aliyun) Update(ctx context.Context, r *provider.Record) error {
+	if r == nil {
+		return fmt.Errorf("Aliyun Update: record 为空")
+	}
 	if r.RecordId == "" {
 		return fmt.Errorf("Aliyun Update: RecordID是空值")
 	}
@@ -132,6 +135,9 @@ func (a *Aliyun) Update(ctx context.Context, r *provider.Record) error {
 // ctx: 上下文，用于控制超时和取消
 // Record: 记录信息，必传DomainName、RR、Type、Value、TTL
 func (a *Aliyun) Create(ctx context.Context, r *provider.Record) (*provider.Record, error) {
+	if r == nil {
+		return nil, fmt.Errorf("Aliyun Create: record 为空")
+	}
 	if r.DomainName == "" {
 		return nil, fmt.Errorf("Aliyun Create: DomainName是空值")
 	}
@@ -226,12 +232,12 @@ func (a *Aliyun) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		RequestId string `json:"RequestId"`
 	}
 	if err := json.Unmarshal(resp, &respData); err != nil {
-		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(resp))
+		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, provider.ResponseBodySummary(resp, false))
 	}
 
 	// 优先拦截并返回业务错误
 	if respData.Code != "" {
-		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", respData.Code, respData.Message)
+		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", respData.Code, provider.ErrorSummary(respData.Message))
 	}
 
 	// 如果是新增记录，直接把阿里云下发的 RecordId 回填给指针对象
@@ -274,21 +280,24 @@ func (a *Aliyun) do(ctx context.Context, req *request) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := provider.ReadResponseBody(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseSummary, err := provider.ReadErrorResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
 		var respData struct {
 			Code    string `json:"Code"`
 			Message string `json:"Message"`
 		}
 		// 尝试解析错误 body，如果连 json 都不是，就把原生字符串丢出来
-		if json.Unmarshal(respBytes, &respData) == nil && respData.Code != "" {
-			return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: Code=%s, Message=%s", resp.StatusCode, respData.Code, respData.Message)
+		if json.Unmarshal([]byte(responseSummary), &respData) == nil && respData.Code != "" {
+			return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: Code=%s, Message=%s", resp.StatusCode, respData.Code, provider.ErrorSummary(respData.Message))
 		}
-		return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("阿里云 API 返回 HTTP %d: %s", resp.StatusCode, responseSummary)
+	}
+	respBytes, err := provider.ReadResponseBody(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 	return respBytes, nil
 }
@@ -312,7 +321,7 @@ func parseResponse(resp []byte) ([]provider.Record, error) {
 	}
 
 	if err := json.Unmarshal(resp, &respData); err != nil {
-		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, string(resp))
+		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, provider.ResponseBodySummary(resp, false))
 	}
 
 	if respData.TotalCount == 0 {
@@ -333,7 +342,7 @@ func parseResponse(resp []byte) ([]provider.Record, error) {
 		})
 	}
 	if len(records) == 0 {
-		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(resp))
+		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", provider.ResponseBodySummary(resp, false))
 	}
 
 	return records, nil

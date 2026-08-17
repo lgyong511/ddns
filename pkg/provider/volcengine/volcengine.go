@@ -78,11 +78,15 @@ func (v *Volcengine) Create(ctx context.Context, record *provider.Record) (*prov
 			RecordID json.RawMessage `json:"RecordID"`
 		} `json:"Result"`
 	}
-	if err := json.Unmarshal(body, &result); err == nil {
-		record.RecordId = scalarString(result.RecordID)
-		if record.RecordId == "" {
-			record.RecordId = scalarString(result.Result.RecordID)
-		}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("Volcengine Create: 响应解析失败: %w", err)
+	}
+	record.RecordId = scalarString(result.RecordID)
+	if record.RecordId == "" {
+		record.RecordId = scalarString(result.Result.RecordID)
+	}
+	if record.RecordId == "" {
+		return nil, fmt.Errorf("Volcengine Create: 响应未返回 RecordID，API返回: %s", provider.ResponseBodySummary(body, false))
 	}
 	return record, nil
 }
@@ -167,7 +171,7 @@ func (v *Volcengine) zoneID(ctx context.Context, domain string) (string, error) 
 			return zoneID, nil
 		}
 	}
-	return "", fmt.Errorf("火山引擎区域不存在 %q，API返回: %s: %w", domain, string(body), provider.ErrRecordNotFound)
+	return "", fmt.Errorf("火山引擎区域不存在 %q，API返回: %s: %w", domain, provider.ResponseBodySummary(body, false), provider.ErrRecordNotFound)
 }
 
 func (v *Volcengine) doJSON(ctx context.Context, action string, payload map[string]any) ([]byte, error) {
@@ -200,12 +204,16 @@ func (v *Volcengine) do(ctx context.Context, method, action string, query url.Va
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseSummary, err := provider.ReadErrorResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("火山引擎 API 返回 HTTP %d: %s", resp.StatusCode, responseSummary)
+	}
 	responseBody, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("火山引擎 API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	var response struct {
 		Error struct {
@@ -225,7 +233,7 @@ func (v *Volcengine) do(ctx context.Context, method, action string, query url.Va
 			apiError = response.ResponseMetadata.Error
 		}
 		if apiError.Code != "" {
-			return nil, fmt.Errorf("火山引擎 API 错误: %s: %s", apiError.Code, apiError.Message)
+			return nil, fmt.Errorf("火山引擎 API 错误: %s: %s", apiError.Code, provider.ErrorSummary(apiError.Message))
 		}
 	}
 	return responseBody, nil

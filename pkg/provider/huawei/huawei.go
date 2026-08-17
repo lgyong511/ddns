@@ -85,6 +85,9 @@ func (h *Huawei) GetSub(ctx context.Context, subdomain string, v provider.Versio
 // ctx: 上下文，用于控制超时和取消
 // Record: 记录信息，必传RecordID、RR、Type、Value
 func (h *Huawei) Update(ctx context.Context, r *provider.Record) error {
+	if r == nil {
+		return fmt.Errorf("Huawei Update: record 为空")
+	}
 	if r.RecordId == "" {
 		return fmt.Errorf("Huawei Update: RecordID是空值")
 	}
@@ -97,6 +100,9 @@ func (h *Huawei) Update(ctx context.Context, r *provider.Record) error {
 // ctx: 上下文，用于控制超时和取消
 // Record: 记录信息，必传DomainName、RR、Type、Value、TTL
 func (h *Huawei) Create(ctx context.Context, r *provider.Record) (*provider.Record, error) {
+	if r == nil {
+		return nil, fmt.Errorf("Huawei Create: record 为空")
+	}
 	if r.DomainName == "" {
 		return nil, fmt.Errorf("Huawei Create: DomainName是空值")
 	}
@@ -135,7 +141,7 @@ func (h *Huawei) Delete(ctx context.Context, recordId, domain string) error {
 		return err
 	}
 	if respData.Code != "" {
-		return fmt.Errorf("Delete 操作记录失败！: Code=%s, Message=%s", respData.Code, respData.Message)
+		return fmt.Errorf("Delete 操作记录失败！: Code=%s, Message=%s", respData.Code, provider.ErrorSummary(respData.Message))
 	}
 
 	return nil
@@ -204,7 +210,7 @@ func (h *Huawei) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		return err
 	}
 	if respData.Code != "" {
-		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", respData.Code, respData.Message)
+		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s", respData.Code, provider.ErrorSummary(respData.Message))
 	}
 
 	if r.RecordId == "" && respData.ID != "" {
@@ -233,12 +239,16 @@ func (h *Huawei) do(ctx context.Context, action, urlStr string, body string) ([]
 	}
 
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseSummary, err := provider.ReadErrorResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("华为云 API 返回 HTTP %d: %s", resp.StatusCode, responseSummary)
+	}
 	respBytes, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("华为云 API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
 	}
 
 	return respBytes, nil
@@ -292,7 +302,7 @@ func (h *Huawei) parseResponse(resp []byte) ([]provider.Record, error) {
 	}
 
 	if len(records) == 0 {
-		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(resp))
+		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", provider.ResponseBodySummary(resp, false))
 	}
 
 	return records, nil

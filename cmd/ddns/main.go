@@ -19,6 +19,11 @@ import (
 	"time"
 )
 
+const (
+	cloudCleanupShutdownTimeout = 5 * time.Second
+	httpShutdownTimeout         = 5 * time.Second
+)
+
 func main() {
 	// 初始化日志配置
 	log.InitLog()
@@ -78,8 +83,6 @@ func main() {
 	defer stop()
 
 	if *enableWeb {
-		go ddnsEngine.Start(ctx)
-
 		webServer, err := web.New(web.Options{
 			ConfigPath:  path,
 			Reloader:    configManager,
@@ -93,31 +96,51 @@ func main() {
 			slog.Error("Web 控制台初始化失败", "error", err)
 			os.Exit(1)
 		}
+		engineDone := make(chan struct{})
+		go func() {
+			defer close(engineDone)
+			ddnsEngine.Start(ctx)
+		}()
 
 		listenAddr := ":" + strings.TrimPrefix(strings.TrimSpace(*listenPort), ":")
 		server := &http.Server{Addr: listenAddr, Handler: webServer.Handler(), ReadHeaderTimeout: 5 * time.Second}
+		serveDone := make(chan error, 1)
 		go func() {
-			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = server.Shutdown(shutdownCtx)
+			serveDone <- server.ListenAndServe()
 		}()
 
 		slog.Info("DDNS Web 控制台已启动", "addr", listenAddr, "config", path)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Web 控制台异常退出", "error", err)
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if closeErr := webServer.Close(cleanupCtx); closeErr != nil {
-				slog.Warn("等待云端清理任务退出失败", "error", closeErr)
-			}
-			cancel()
-			os.Exit(1)
+		var serveErr error
+		select {
+		case serveErr = <-serveDone:
+			stop()
+		case <-ctx.Done():
+			slog.Info("开始关闭 Web 控制台")
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), cloudCleanupShutdownTimeout)
 		if err := webServer.Close(cleanupCtx); err != nil {
 			slog.Warn("等待云端清理任务退出失败", "error", err)
 		}
-		cancel()
+		cleanupCancel()
+
+		httpShutdownCtx, httpShutdownCancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		if err := server.Shutdown(httpShutdownCtx); err != nil && err != http.ErrServerClosed {
+			slog.Warn("Web 控制台优雅关闭超时，强制关闭连接", "error", err)
+			if closeErr := server.Close(); closeErr != nil {
+				slog.Warn("强制关闭 Web 控制台失败", "error", closeErr)
+			}
+		}
+		httpShutdownCancel()
+
+		if serveErr == nil {
+			serveErr = <-serveDone
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			slog.Error("Web 控制台异常退出", "error", serveErr)
+		}
+		slog.Info("DDNS Web 控制台已退出")
+		<-engineDone
 	} else {
 		ddnsEngine.Start(ctx)
 	}

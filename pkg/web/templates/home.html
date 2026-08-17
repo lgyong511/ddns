@@ -8,7 +8,6 @@
   <title>DDNS 控制台</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 
 <body>
@@ -50,6 +49,7 @@
             <a href="/providers/{{$pIdx}}/edit">编辑</a>
             <form method="post" action="/providers/{{$pIdx}}/delete" onsubmit="return confirm('确定删除该服务商及其记录吗？')">
               <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="configVersion" value="{{$.ConfigVersion}}">
               <button class="link danger" type="submit">删除</button>
             </form>
           </div>
@@ -90,6 +90,7 @@
                 <a href="/providers/{{$pIdx}}/records/{{$rIdx}}/edit">编辑</a>
                 <form method="post" action="/providers/{{$pIdx}}/records/{{$rIdx}}/delete" data-delete-record>
                   <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="configVersion" value="{{$.ConfigVersion}}">
                   <input type="hidden" name="deleteCloud" value="false">
                   <button class="link danger" type="submit">删除</button>
                 </form>

@@ -68,6 +68,9 @@ func loadConfig(path string) (config.Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return config.Config{}, err
 	}
+	if err := cfg.NormalizeDomains(); err != nil {
+		return config.Config{}, err
+	}
 	normalizeConfig(&cfg)
 	return cfg, nil
 }
@@ -108,6 +111,9 @@ func normalizeConfig(cfg *config.Config) {
 }
 
 func saveConfig(path string, cfg *config.Config) error {
+	if err := cfg.NormalizeDomains(); err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err

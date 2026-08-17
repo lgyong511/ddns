@@ -181,7 +181,7 @@ func (t *Tencent) Delete(ctx context.Context, recordId, domain string) error {
 	}
 
 	if respData.Response.Error.Code != "" {
-		return fmt.Errorf("删除记录失败！err:%v", respData.Response.Error.Message)
+		return fmt.Errorf("删除记录失败！err:%v", provider.ErrorSummary(respData.Response.Error.Message))
 	}
 
 	return nil
@@ -213,12 +213,16 @@ func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseSummary, err := provider.ReadErrorResponseBody(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("腾讯云 API 返回 HTTP %d: %s", resp.StatusCode, responseSummary)
+	}
 	body, err := provider.ReadResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("腾讯云 API 返回 HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	return body, nil
@@ -229,6 +233,9 @@ func (t *Tencent) do(ctx context.Context, action, payload string) ([]byte, error
 func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 	if t.secretId == "" || t.secretKey == "" {
 		return fmt.Errorf("Tencent addAndUpdate: secretId 或 secretKey 为空值")
+	}
+	if r == nil {
+		return fmt.Errorf("Tencent addAndUpdate: record 为空")
 	}
 
 	if r.RR == "" || r.Type == "" || r.Value == "" {
@@ -284,14 +291,14 @@ func (t *Tencent) addAndUpdate(ctx context.Context, r *provider.Record) error {
 		} `json:"Response"`
 	}
 	if err := json.Unmarshal(resp, &respData); err != nil {
-		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, string(resp))
+		return fmt.Errorf("addAndUpdate: json反序列化错误: %v, API返回: %s", err, provider.ResponseBodySummary(resp, false))
 	}
 
 	// 拦截腾讯云业务错误
 	if respData.Response.Error.Code != "" {
 		return fmt.Errorf("addAndUpdate: 操作记录失败！: Code=%s, Message=%s (RequestId: %s)",
 			respData.Response.Error.Code,
-			respData.Response.Error.Message,
+			provider.ErrorSummary(respData.Response.Error.Message),
 			respData.Response.RequestId,
 		)
 	}
@@ -325,7 +332,7 @@ func parseResponse(resp []byte, domain string) ([]provider.Record, error) {
 	}
 
 	if err := json.Unmarshal(resp, &respData); err != nil {
-		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, string(resp))
+		return nil, fmt.Errorf("parseResponse: json反序列化错误: %v, API返回: %s", err, provider.ResponseBodySummary(resp, false))
 	}
 
 	// 拦截特定错误码，适配通用的 "ErrRecordNotFound" 行为
@@ -336,7 +343,7 @@ func parseResponse(resp []byte, domain string) ([]provider.Record, error) {
 			return nil, provider.ErrRecordNotFound
 		}
 		return nil, fmt.Errorf("parseResponse: API返回错误 [%s]: %s",
-			respData.Response.Error.Code, respData.Response.Error.Message)
+			respData.Response.Error.Code, provider.ErrorSummary(respData.Response.Error.Message))
 	}
 
 	// 检查是否有记录
@@ -359,7 +366,7 @@ func parseResponse(resp []byte, domain string) ([]provider.Record, error) {
 		})
 	}
 	if len(records) == 0 {
-		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", string(resp))
+		return nil, fmt.Errorf("parseResponse: 没有解析到域名记录 ， API返回: %s", provider.ResponseBodySummary(resp, false))
 	}
 
 	return records, nil

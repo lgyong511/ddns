@@ -146,6 +146,9 @@ func (r *Record) UnmarshalYAML(value *yaml.Node) error {
 // Validate 检查配置的有效性
 func (c *Config) Validate() error {
 	var errs []error
+	if err := c.NormalizeDomains(); err != nil {
+		errs = append(errs, err)
+	}
 
 	//检查Providers
 	providerNames := make(map[string]bool)
@@ -216,13 +219,8 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains 不能为空", p.Name, j))
 			}
 			for _, subDomain := range r.SubDomains {
-				if err := validateDomainName(subDomain); err != nil {
-					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains: %w", p.Name, j, err))
-					continue
-				}
 				key, err := domainVersionKey(subDomain, r.IPVersion)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains: %w", p.Name, j, err))
 					continue
 				}
 				if domainVersions[key] {
@@ -283,6 +281,25 @@ func (c *Config) Validate() error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+// NormalizeDomains converts record domains to lowercase ASCII without a trailing dot.
+func (c *Config) NormalizeDomains() error {
+	var errs []error
+	for i := range c.Providers {
+		for j := range c.Providers[i].Records {
+			record := &c.Providers[i].Records[j]
+			for k, subDomain := range record.SubDomains {
+				normalized, err := normalizedDomainName(subDomain)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("providers[%s].records[%d].subDomains: %w", c.Providers[i].Name, j, err))
+					continue
+				}
+				record.SubDomains[k] = normalized
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 var validProviderTypes = map[string]bool{

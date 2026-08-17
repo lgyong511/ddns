@@ -29,6 +29,36 @@ func TestReadResponseBody(t *testing.T) {
 	}
 }
 
+func TestReadErrorResponseBodyTruncatesToSummaryLimit(t *testing.T) {
+	summary, err := ReadErrorResponseBody(strings.NewReader(strings.Repeat("x", MaxErrorResponseBodyBytes+1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(summary, " [truncated]") {
+		t.Fatalf("summary = %q, want truncation marker", summary)
+	}
+	if len(summary) != MaxErrorResponseBodyBytes+len(" [truncated]") {
+		t.Fatalf("summary length = %d", len(summary))
+	}
+}
+
+func TestResponseBodySummaryCapsSuccessfulBodyInErrors(t *testing.T) {
+	summary := ResponseBodySummary([]byte(strings.Repeat("x", MaxResponseBodyBytes)), false)
+	if !strings.HasSuffix(summary, " [truncated]") {
+		t.Fatalf("summary = %q, want truncation marker", summary)
+	}
+	if len(summary) != MaxErrorResponseBodyBytes+len(" [truncated]") {
+		t.Fatalf("summary length = %d", len(summary))
+	}
+}
+
+func TestErrorSummaryTruncatesBusinessErrorMessage(t *testing.T) {
+	summary := ErrorSummary(strings.Repeat("x", MaxErrorResponseBodyBytes+1))
+	if !strings.HasSuffix(summary, " [truncated]") {
+		t.Fatalf("summary = %q, want truncation marker", summary)
+	}
+}
+
 func TestRateLimitedTransportHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
