@@ -9,7 +9,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 </head>
 <body data-config-watch="warn">
-  <header class="topbar"><a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a><nav><a href="/">返回</a><a href="/import">导入配置</a><a href="/export" title="可选择是否包含 Web 账号和密码哈希">导出配置</a><span class="version">版本 {{.Version}}</span></nav></header>
+  <header class="topbar"><a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">控制台</a><nav><a href="/">返回</a><a href="/import">导入配置</a><a href="/export" title="可选择是否包含 Web 账号和密码哈希">导出配置</a><span class="version">版本 {{.Version}}</span></nav></header>
   <main class="shell narrow">
     <h1>Webhook 配置</h1>
     {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
