@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"ddns/pkg/config"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +64,16 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 		s.renderImportPage(w, r, isSetup, err.Error())
 		return
 	}
-	imported.Auth = current.Auth
+	includeAuth := r.FormValue("includeAuth") == "on"
+	if includeAuth {
+		if err := validateImportedAuth(&imported.Auth); err != nil {
+			slog.Warn("Web 配置导入失败", "stage", "auth", "err", err)
+			s.renderImportPage(w, r, isSetup, err.Error())
+			return
+		}
+	} else {
+		imported.Auth = current.Auth
+	}
 	if err := s.persist(&imported); err != nil {
 		slog.Error("Web 配置导入失败", "stage", "save", "err", err)
 		s.renderImportPage(w, r, isSetup, fmt.Sprintf("保存导入配置失败: %v", err))
@@ -71,12 +83,40 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 		"Web 配置导入成功",
 		"providers", len(imported.Providers),
 		"webhookConfigured", imported.Webhook.URL != "",
+		"authIncluded", includeAuth,
 	)
+	if includeAuth {
+		s.sessions.clear()
+		http.SetCookie(w, expiredSessionCookie())
+		http.Redirect(w, r, "/login?imported=1", http.StatusSeeOther)
+		return
+	}
 	if isSetup {
 		http.Redirect(w, r, "/setup?imported=1", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/?imported=1", http.StatusSeeOther)
+}
+
+func validateImportedAuth(auth *config.Auth) error {
+	if auth == nil {
+		return fmt.Errorf("导入文件缺少 Web 账号密码配置")
+	}
+	auth.Username = strings.TrimSpace(auth.Username)
+	if auth.Username == "" {
+		return fmt.Errorf("导入文件中的 Web 账号不能为空")
+	}
+	if auth.PasswordHash == "" {
+		return fmt.Errorf("导入文件中的 Web 密码哈希不能为空")
+	}
+	if _, err := bcrypt.Cost([]byte(auth.PasswordHash)); err != nil {
+		return fmt.Errorf("导入文件中的 Web 密码哈希不是有效的 bcrypt 格式")
+	}
+	return nil
+}
+
+func expiredSessionCookie() *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode}
 }
 
 func (s *Server) hasSession(r *http.Request) bool {

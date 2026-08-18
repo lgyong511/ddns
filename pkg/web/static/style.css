@@ -791,6 +791,18 @@ textarea {
   color: #7f1d1d;
 }
 
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.checkbox-option input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;

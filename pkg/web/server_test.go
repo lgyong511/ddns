@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type fakeCloudOperator struct {
@@ -650,6 +652,46 @@ auth:
 	}
 }
 
+func TestImportConfigIncludesWebAuthAndInvalidatesSessions(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	token, csrf, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := bcryptHash(t, "imported-password")
+	request := newImportRequestWithAuth(t, "import.yaml", importYAMLWithAuth("imported-user", hash), csrf, true)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+
+	server.importConfig(response, request)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/login?imported=1" {
+		t.Fatalf("response = (%d, %q), want login redirect", response.Code, response.Header().Get("Location"))
+	}
+	if server.sessions.touch(token) {
+		t.Fatal("existing session remains valid after auth import")
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != sessionCookie || cookies[0].MaxAge != -1 {
+		t.Fatalf("session expiry cookies = %#v, want one expired session cookie", cookies)
+	}
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Auth.Username != "imported-user" || updated.Auth.PasswordHash != hash {
+		t.Fatalf("auth = %#v, want imported credentials", updated.Auth)
+	}
+}
+
 func TestImportConfigRejectsInvalidFileWithoutSaving(t *testing.T) {
 	original := `providers: []
 webhook:
@@ -733,6 +775,89 @@ auth: {}
 	}
 }
 
+func TestImportConfigIncludesWebAuthDuringSetup(t *testing.T) {
+	server, configPath := newImportTestServer(t, `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth: {}
+`)
+	hash := bcryptHash(t, "imported-password")
+	request := newImportRequestWithAuth(t, "import.yml", importYAMLWithAuth("imported-user", hash), "", true)
+	response := httptest.NewRecorder()
+
+	server.importConfig(response, request)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/login?imported=1" {
+		t.Fatalf("response = (%d, %q), want login redirect", response.Code, response.Header().Get("Location"))
+	}
+	updated, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Auth.Username != "imported-user" || updated.Auth.PasswordHash != hash {
+		t.Fatalf("auth = %#v, want imported credentials", updated.Auth)
+	}
+}
+
+func TestImportConfigRejectsInvalidImportedAuthWithoutSaving(t *testing.T) {
+	original := `providers: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: current-user
+  passwordHash: current-hash
+`
+	validHash := bcryptHash(t, "password")
+	tests := []struct {
+		name     string
+		username string
+		hash     string
+		message  string
+	}{
+		{name: "missing username", hash: validHash, message: "账号不能为空"},
+		{name: "missing hash", username: "imported-user", message: "密码哈希不能为空"},
+		{name: "invalid hash", username: "imported-user", hash: "not-a-bcrypt-hash", message: "不是有效的 bcrypt 格式"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, configPath := newImportTestServer(t, original)
+			token, csrf, err := server.sessions.create()
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := newImportRequestWithAuth(
+				t,
+				"import.yaml",
+				importYAMLWithAuth(tt.username, tt.hash),
+				csrf,
+				true,
+			)
+			request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+			response := httptest.NewRecorder()
+
+			server.importConfig(response, request)
+
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), tt.message) {
+				t.Fatalf("response = (%d, %q), want auth validation error", response.Code, response.Body.String())
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != original {
+				t.Fatalf("config changed after invalid auth import:\n%s", data)
+			}
+			if !server.sessions.touch(token) {
+				t.Fatal("existing session was invalidated after rejected auth import")
+			}
+		})
+	}
+}
+
 func TestParseImportedConfigRejectsUnsupportedAndOversizedFiles(t *testing.T) {
 	if _, err := parseImportedConfig(strings.NewReader(validImportYAML), "config.json"); err == nil {
 		t.Fatal("parseImportedConfig accepted unsupported filename")
@@ -755,7 +880,7 @@ auth: {}
 	getResponse := httptest.NewRecorder()
 	server.importConfig(getResponse, getRequest)
 	page := getResponse.Body.String()
-	if getResponse.Code != http.StatusOK || !strings.Contains(page, "无法撤销") || strings.Contains(page, "confirmOverwrite") {
+	if getResponse.Code != http.StatusOK || !strings.Contains(page, "此操作会覆盖现有配置") || !strings.Contains(page, `name="includeAuth"`) || strings.Contains(page, "checked") || strings.Contains(page, "confirmOverwrite") {
 		t.Fatalf("import page warning or confirmation field is incorrect: %s", page)
 	}
 
@@ -776,6 +901,7 @@ auth: {}
 }
 
 func TestExportConfigExcludesAuthAndCanBeImported(t *testing.T) {
+	hash := bcryptHash(t, "current-password")
 	server, _ := newImportTestServer(t, `providers:
   - name: home
     provider: aliyun
@@ -789,9 +915,9 @@ webhook:
   headers: []
 auth:
   username: current-user
-  passwordHash: current-hash
+  passwordHash: `+hash+`
 `)
-	token, _, err := server.sessions.create()
+	token, csrf, err := server.sessions.create()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -804,8 +930,29 @@ auth:
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
+	page := response.Body.String()
+	if !strings.Contains(page, `name="includeAuth"`) || strings.Contains(page, "checked") {
+		t.Fatalf("export confirmation page is incorrect: %s", page)
+	}
+	postExport := func(includeAuth bool) *httptest.ResponseRecorder {
+		values := url.Values{"csrf": {csrf}}
+		if includeAuth {
+			values.Set("includeAuth", "on")
+		}
+		request := httptest.NewRequest(http.MethodPost, "/export", strings.NewReader(values.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+		response := httptest.NewRecorder()
+		server.requireAuth(server.exportConfig).ServeHTTP(response, request)
+		return response
+	}
+
+	response = postExport(false)
 	if contentType := response.Header().Get("Content-Type"); contentType != "application/x-yaml; charset=utf-8" {
 		t.Fatalf("Content-Type = %q", contentType)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
 	}
 	contentDisposition := response.Header().Get("Content-Disposition")
 	if !strings.HasPrefix(contentDisposition, "attachment; filename=\"ddns-config-") || !strings.HasSuffix(contentDisposition, ".yaml\"") {
@@ -824,6 +971,59 @@ auth:
 	}
 	if exported.Webhook.URL != "https://example.com/webhook" {
 		t.Fatalf("exported webhook URL = %q", exported.Webhook.URL)
+	}
+
+	response = postExport(true)
+	contentDisposition = response.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(contentDisposition, "attachment; filename=\"ddns-config-with-auth-") || !strings.HasSuffix(contentDisposition, ".yaml\"") {
+		t.Fatalf("auth Content-Disposition = %q", contentDisposition)
+	}
+	exported, err = parseImportedConfig(strings.NewReader(response.Body.String()), "ddns-config-with-auth.yaml")
+	if err != nil {
+		t.Fatalf("auth export cannot be imported: %v", err)
+	}
+	if exported.Auth.Username != "current-user" || exported.Auth.PasswordHash != hash {
+		t.Fatalf("exported auth = %#v, want current credentials", exported.Auth)
+	}
+}
+
+func TestExportConfigRequiresCSRF(t *testing.T) {
+	server, _ := newImportTestServer(t, `providers: []
+webhook: {}
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	token, _, err := server.sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/export", strings.NewReader(""))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+
+	server.requireAuth(server.exportConfig).ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestLoginShowsImportedAuthNotice(t *testing.T) {
+	server, _ := newImportTestServer(t, `providers: []
+webhook: {}
+auth:
+  username: current-user
+  passwordHash: current-hash
+`)
+	request := httptest.NewRequest(http.MethodGet, "/login?imported=1", nil)
+	response := httptest.NewRecorder()
+
+	server.login(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "账号密码已导入，请使用导入账号登录") {
+		t.Fatalf("response = (%d, %q), want imported auth notice", response.Code, response.Body.String())
 	}
 }
 
@@ -897,11 +1097,20 @@ func newImportTestServer(t *testing.T, configData string) (*Server, string) {
 }
 
 func newImportRequest(t *testing.T, filename, configData, csrf string) *http.Request {
+	return newImportRequestWithAuth(t, filename, configData, csrf, false)
+}
+
+func newImportRequestWithAuth(t *testing.T, filename, configData, csrf string, includeAuth bool) *http.Request {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	if csrf != "" {
 		if err := writer.WriteField("csrf", csrf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if includeAuth {
+		if err := writer.WriteField("includeAuth", "on"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -918,6 +1127,33 @@ func newImportRequest(t *testing.T, filename, configData, csrf string) *http.Req
 	request := httptest.NewRequest(http.MethodPost, "/import", &body)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	return request
+}
+
+func bcryptHash(t *testing.T, password string) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(hash)
+}
+
+func importYAMLWithAuth(username, passwordHash string) string {
+	return fmt.Sprintf(`providers:
+  - name: imported
+    provider: aliyun
+    keyId: imported-id
+    keySecret: imported-secret
+    forceInterval: 5
+    records: []
+webhook:
+  url: ""
+  body: ""
+  headers: []
+auth:
+  username: %s
+  passwordHash: %s
+`, username, passwordHash)
 }
 
 func TestLoginLimiterLocksAndBacksOff(t *testing.T) {

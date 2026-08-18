@@ -294,7 +294,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		s.render(w, "login.html", map[string]any{"Title": "登录"})
+		s.render(w, "login.html", map[string]any{"Title": "登录", "Imported": importSuccess(r)})
 		return
 	}
 	if r.Method != http.MethodPost {

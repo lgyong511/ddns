@@ -58,6 +58,15 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 - `generic`：轻量通用版，基于 Alpine，适合普通场景，多架构镜像
 - `openwrt`：面向软路由 OpenWrt 场景的镜像，适合挂载 `ubus` socket，只有amd64（x86-64）
 
+Docker 镜像固定读取 `/etc/ddns/config.yaml`。建议将宿主机配置文件映射到该路径，并保持可写，以便 Web 控制台保存配置。宿主机文件必须在启动容器前创建，否则 Docker 可能将不存在的源路径创建成目录：
+
+```bash
+mkdir -p config
+printf 'providers: []\nwebhook:\n  headers: []\n' > config/config.yaml
+```
+
+后续示例中的 `$(pwd)/config/config.yaml` 可以替换为宿主机上的任意绝对路径，例如 `/etc/ddns/config.yaml`。
+
 #### 运行通用版
 
 **说明：若不使用网卡获取IP地址，请去除 `--net=host`**
@@ -67,6 +76,7 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -75,6 +85,7 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -89,6 +100,7 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
@@ -98,6 +110,7 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
@@ -314,8 +327,9 @@ Web 模式与普通命令行模式共享启动时解析出的 `ConfigPath`：
 首次设置页可选择本地 `.yaml` 或 `.yml` 文件导入已有配置；登录后，页面顶部菜单也提供导入和导出入口。
 
 - 导入会覆盖当前所有 DNS 服务商和 Webhook 设置，保存过程不生成备份文件；导入页面会显示覆盖警示；
-- 导入文件中的 Web 登录账号和密码哈希会被忽略，始终保留当前控制台账号。首次设置阶段导入后，仍需创建账号；
-- 导出仅包含 DNS 服务商和 Webhook，不包含 `auth`、用户名或密码哈希；导出的 YAML 可再次用于导入；
+- 导入默认不处理 Web 登录账号，始终保留当前控制台账号；勾选“同时导入 Web 账号和密码配置”后，才会导入 `auth.username` 和 bcrypt `auth.passwordHash`，不包含明文密码。账号配置缺失或哈希无效时，整个导入会被拒绝；
+- 勾选导入账号配置并成功保存后，所有 Web 会话会失效，需要使用导入账号重新登录；首次设置阶段勾选后直接进入登录页，未勾选时仍需创建账号；
+- 导出默认仅包含 DNS 服务商和 Webhook。导出页面可选择是否包含 `auth`；勾选后文件包含用户名和 bcrypt 密码哈希，文件名带有 `with-auth`；
 - 导出文件包含服务商密钥和可能含敏感信息的 Webhook 内容，请妥善保存，不要提交到公开仓库；
 - 单个导入请求体最大 1 MiB，导入成功后会自动热加载配置。
 
@@ -331,6 +345,7 @@ Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -339,18 +354,25 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
-Docker 镜像默认使用 `/etc/ddns/config.yaml`。镜像内包含最小配置；如果挂载宿主机目录，挂载前请先确保宿主机的 `./config/config.yaml` 已存在，否则会覆盖镜像内的默认文件。建议使用以下方式准备并持久化配置：
+Docker 镜像默认使用 `/etc/ddns/config.yaml`。镜像内包含最小配置；映射宿主机文件后，Web 修改会直接保存到宿主机的 `./config/config.yaml`。不要添加 `:ro`，否则 Web 控制台无法保存配置：
 
 ```bash
 mkdir -p config
 printf 'providers: []\nwebhook:\n  headers: []\n' > config/config.yaml
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
-  -v "$(pwd)/config:/etc/ddns" \
+  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
   ghcr.io/lgyong511/ddns:latest
+```
+
+仓库中的 `docker-compose.yml` 使用相同的文件映射。准备好 `./config/config.yaml` 后可直接启动：
+
+```bash
+docker compose up -d
 ```
 
 Web 控制台默认监听所有网卡。部署在公网或局域网环境时，请通过防火墙、反向代理或其他访问控制措施限制访问，并妥善保管登录密码和 DNS 服务商密钥。

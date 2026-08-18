@@ -13,11 +13,11 @@
   <main class="auth-card import-card">
     <img class="brand-logo" src="/static/logo.svg" alt="DDNS">
     <h1>导入已有配置</h1>
-    <p class="muted">导入完成后，请返回首次设置页面创建 Web 控制台账号。</p>
+    <p class="muted">默认仅导入 DNS 与 Webhook；也可以导入已有 Web 账号和密码哈希。</p>
   {{else}}
   <header class="topbar">
     <a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a>
-    <nav><a href="/">返回配置</a><a href="/export" title="导出文件包含服务商密钥和 Webhook 内容">导出配置</a><span class="version">版本 {{.Version}}</span></nav>
+    <nav><a href="/">返回配置</a><a href="/export" title="可选择是否包含 Web 账号和密码哈希">导出配置</a><span class="version">版本 {{.Version}}</span></nav>
   </header>
   <main class="shell narrow">
     <section class="page-title"><div><h1>导入配置</h1><p>使用本地 YAML 文件覆盖当前 DNS 服务商和 Webhook 设置。</p></div></section>
@@ -25,11 +25,13 @@
     {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
     <section class="import-warning">
       <strong>此操作会覆盖现有配置</strong>
-      <p>导入将替换所有 DNS 服务商和 Webhook 设置，且无法撤销。当前 Web 控制台账号和密码不会被覆盖。</p>
+      {{if .IsSetup}}<p>导入将替换所有 DNS 服务商和 Webhook 设置。未勾选账号配置时，导入后仍需创建 Web 账号；勾选后将直接使用导入账号登录。</p>{{else}}<p>导入将替换所有 DNS 服务商和 Webhook 设置。未勾选时保留当前 Web 账号；勾选后将覆盖账号密码并要求重新登录。</p>{{end}}
     </section>
     <form class="panel import-form" method="post" action="/import" enctype="multipart/form-data">
       {{if .CSRF}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
       <label>YAML 配置文件<input name="configFile" type="file" accept=".yaml,.yml,application/x-yaml,text/yaml" required></label>
+      <label class="checkbox-option"><input name="includeAuth" type="checkbox"><span>同时导入 Web 账号和密码配置</span></label>
+      <span class="field-help">密码以 bcrypt 哈希形式迁移，不包含明文。勾选后，缺少或无效的账号配置会导致整个导入被拒绝。</span>
       <div class="form-actions">
         {{if .IsSetup}}<a class="button" href="/setup">返回首次设置</a>{{else}}<a class="button" href="/">取消</a>{{end}}
         <button class="button danger-button" type="submit">确认导入并覆盖</button>

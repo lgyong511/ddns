@@ -13,6 +13,7 @@
     <img class="brand-logo" src="/static/logo.svg" alt="DDNS">
     <h1>DDNS 控制台</h1>
     <p class="muted">登录后管理解析服务商、记录和 Webhook。</p>
+    {{if .Imported}}<div class="notice">账号密码已导入，请使用导入账号登录。</div>{{end}}
     {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
     <form method="post" action="/login">
       <label>账号<input name="username" maxlength="64" autocomplete="username" required autofocus></label>

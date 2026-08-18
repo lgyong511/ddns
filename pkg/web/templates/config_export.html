@@ -1,0 +1,34 @@
+{{define "config_export.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DDNS 控制台 - 导出配置</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a>
+    <nav><a href="/">返回配置</a><a href="/import">导入配置</a><span class="version">版本 {{.Version}}</span></nav>
+  </header>
+  <main class="shell narrow">
+    <section class="page-title"><div><h1>导出配置</h1><p>生成可用于迁移或恢复的 YAML 配置文件。</p></div></section>
+    <section class="import-warning">
+      <strong>导出文件包含敏感信息</strong>
+      <p>文件始终包含 DNS 服务商密钥和 Webhook 内容。请妥善保存，不要提交到公开仓库。</p>
+    </section>
+    <form class="panel import-form" method="post" action="/export">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label class="checkbox-option"><input name="includeAuth" type="checkbox"><span>同时导出 Web 账号和密码配置</span></label>
+      <span class="field-help">默认不包含账号。勾选后会导出用户名和 bcrypt 密码哈希，不包含明文密码。</span>
+      <div class="form-actions">
+        <a class="button" href="/">取消</a>
+        <button class="primary" type="submit">下载配置</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
+{{end}}
