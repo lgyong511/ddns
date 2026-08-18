@@ -86,18 +86,50 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-binaries
     steps:
+      - name: Checkout code and tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./dist
           merge-multiple: true
 
+      - name: Generate commit list
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          previous_tag="$(git describe --tags --match 'v*' --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)"
+          commit_range="${CURRENT_TAG}"
+          if [[ -n "${previous_tag}" ]]; then
+            commit_range="${previous_tag}..${CURRENT_TAG}"
+          fi
+
+          {
+            printf '## 提交记录\n\n'
+            if [[ -n "${previous_tag}" ]]; then
+              printf '自 `%s` 以来的提交：\n\n' "${previous_tag}"
+            else
+              printf '首次发布包含的提交：\n\n'
+            fi
+
+            if [[ "$(git rev-list --count "${commit_range}")" -gt 0 ]]; then
+              git log "${commit_range}" --first-parent --pretty=format:'- %s (`%h`)'
+              printf '\n'
+            else
+              printf -- '- 无新增提交\n'
+            fi
+          } > release-notes.md
+
       - name: Create GitHub Release with Release Notes
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
-          # 🚀 核心：开启 GitHub 官方自动发布说明生成
+          body_path: release-notes.md
+          # 保留 GitHub 官方自动发布说明及 Full Changelog 链接
           generate_release_notes: true
           # 自动把 ./dist 下的所有二进制文件一次性附加上传到 Release 附件中
           files: ./dist/*
