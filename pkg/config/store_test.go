@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -205,6 +206,72 @@ func TestConfigFilesUseRestrictedPermissions(t *testing.T) {
 		t.Fatal(err)
 	} else if got := info.Mode().Perm(); got != 0600 {
 		t.Fatalf("config file permissions = %o, want 600", got)
+	}
+}
+
+func TestWriteConfigFileHandlesRenameErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		renameErr   error
+		wantData    string
+		wantErr     bool
+		wantErrText string
+	}{
+		{
+			name:      "falls back for bind mounted file",
+			renameErr: &os.LinkError{Op: "rename", Err: syscall.EBUSY},
+			wantData:  "updated\n",
+		},
+		{
+			name:        "preserves file for unrelated rename error",
+			renameErr:   errors.New("rename denied"),
+			wantData:    "original\n",
+			wantErr:     true,
+			wantErrText: "rename denied",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte("original\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err := writeConfigFileWithRename(path, []byte("updated\n"), func(oldPath, newPath string) error {
+				linkErr, ok := tt.renameErr.(*os.LinkError)
+				if !ok {
+					return tt.renameErr
+				}
+				clone := *linkErr
+				clone.Old = oldPath
+				clone.New = newPath
+				return &clone
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("writeConfigFileWithRename() error = %v, want error: %v", err, tt.wantErr)
+			}
+			if tt.wantErrText != "" && !strings.Contains(err.Error(), tt.wantErrText) {
+				t.Fatalf("writeConfigFileWithRename() error = %v, want text %q", err, tt.wantErrText)
+			}
+			if got := string(mustReadFile(t, path)); got != tt.wantData {
+				t.Fatalf("saved data = %q, want %q", got, tt.wantData)
+			}
+			if matches, err := filepath.Glob(filepath.Join(dir, ".config-*.yaml")); err != nil {
+				t.Fatal(err)
+			} else if len(matches) != 0 {
+				t.Fatalf("temporary files were not removed: %v", matches)
+			}
+			if !tt.wantErr {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := info.Mode().Perm(); got != 0600 {
+					t.Fatalf("config file permissions = %o, want 600", got)
+				}
+			}
+		})
 	}
 }
 

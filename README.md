@@ -58,14 +58,14 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 - `generic`：轻量通用版，基于 Alpine，适合普通场景，多架构镜像
 - `openwrt`：面向软路由 OpenWrt 场景的镜像，适合挂载 `ubus` socket，只有amd64（x86-64）
 
-Docker 镜像固定读取 `/etc/ddns/config.yaml`。建议将宿主机配置文件映射到该路径，并保持可写，以便 Web 控制台保存配置。宿主机文件必须在启动容器前创建，否则 Docker 可能将不存在的源路径创建成目录：
+Docker 镜像固定读取 `/etc/ddns/config.yaml`。建议将宿主机配置目录映射到容器的 `/etc/ddns`，并保持可写，以便 Web 控制台通过原子替换保存配置。宿主机目录和 `config.yaml` 必须在启动容器前创建：
 
 ```bash
 mkdir -p config
 printf 'providers: []\nwebhook:\n  headers: []\n' > config/config.yaml
 ```
 
-后续示例中的 `$(pwd)/config/config.yaml` 可以替换为宿主机上的任意绝对路径，例如 `/etc/ddns/config.yaml`。
+后续示例中的 `$(pwd)/config` 可以替换为宿主机上的任意配置目录绝对路径，例如 `/opt/ddns/config`。
 
 #### 运行通用版
 
@@ -76,7 +76,7 @@ printf 'providers: []\nwebhook:\n  headers: []\n' > config/config.yaml
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -85,7 +85,7 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -100,7 +100,7 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
@@ -110,7 +110,7 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   -v /var/run/ubus/ubus.sock:/var/run/ubus/ubus.sock \
   ghcr.io/lgyong511/ddns:latest-openwrt
 ```
@@ -348,7 +348,7 @@ Docker 镜像默认启动 Web 控制台，监听 `8686` 端口，无需覆盖启
 ```bash
 docker run -d --name ddns --restart always \
   --net=host \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
@@ -357,22 +357,22 @@ docker run -d --name ddns --restart always \
 ```bash
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
-Docker 镜像默认使用 `/etc/ddns/config.yaml`。镜像内包含最小配置；映射宿主机文件后，Web 修改会直接保存到宿主机的 `./config/config.yaml`。不要添加 `:ro`，否则 Web 控制台无法保存配置：
+Docker 镜像默认使用 `/etc/ddns/config.yaml`。映射宿主机配置目录后，Web 修改会直接保存到宿主机的 `./config/config.yaml`。不要添加 `:ro`，否则 Web 控制台无法保存配置：
 
 ```bash
 mkdir -p config
 printf 'providers: []\nwebhook:\n  headers: []\n' > config/config.yaml
 docker run -d --name ddns --restart always \
   -p 8686:8686 \
-  -v "$(pwd)/config/config.yaml:/etc/ddns/config.yaml:rw" \
+  -v "$(pwd)/config:/etc/ddns:rw" \
   ghcr.io/lgyong511/ddns:latest
 ```
 
-仓库中的 `docker-compose.yml` 使用相同的文件映射。准备好 `./config/config.yaml` 后可直接启动：
+仓库中的 `docker-compose.yml` 使用相同的目录映射。准备好 `./config/config.yaml` 后可直接启动：
 
 ```bash
 docker compose up -d

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -282,6 +283,10 @@ func cloneYAMLNode(node *yaml.Node) *yaml.Node {
 }
 
 func writeConfigFile(path string, data []byte) error {
+	return writeConfigFileWithRename(path, data, os.Rename)
+}
+
+func writeConfigFileWithRename(path string, data []byte, rename func(string, string) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -310,10 +315,49 @@ func writeConfigFile(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
+	if err := rename(tmpName, path); err != nil {
+		if !errors.Is(err, syscall.EBUSY) {
+			return err
+		}
+		slog.Warn("配置文件是绑定挂载点，改用原位写入", "path", path)
+		return overwriteMountedConfig(path, data)
 	}
 	return syncDirectory(dir)
+}
+
+func overwriteMountedConfig(path string, data []byte) error {
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("读取原配置失败: %w", err)
+	}
+	if err := writeFileInPlace(path, data); err != nil {
+		writeErr := fmt.Errorf("原位写入配置失败: %w", err)
+		if restoreErr := writeFileInPlace(path, original); restoreErr != nil {
+			return errors.Join(writeErr, fmt.Errorf("恢复原配置失败: %w", restoreErr))
+		}
+		return fmt.Errorf("%w，已恢复原配置", writeErr)
+	}
+	return nil
+}
+
+func writeFileInPlace(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0600); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := file.Truncate(0); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if _, err := file.Write(data); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := file.Sync(); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	return file.Close()
 }
 
 func syncDirectory(path string) error {
