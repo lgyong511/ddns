@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 </head>
-<body class="logs-page">
+<body class="logs-page" data-config-watch="auth">
   <header class="topbar">
     <a class="brand" href="/"><img class="brand-logo" src="/static/logo.svg" alt="">DDNS 控制台</a>
     <nav>
@@ -46,6 +46,7 @@
       box.scrollTop = box.scrollHeight;
     };
   </script>
+  <script src="/static/config-events.js"></script>
 </body>
 </html>
 {{end}}

@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 </head>
-<body{{if .IsSetup}} class="auth-page"{{end}}>
+<body{{if .IsSetup}} class="auth-page"{{else}} data-config-watch="warn"{{end}}>
   {{if .IsSetup}}
   <main class="auth-card import-card">
     <img class="brand-logo" src="/static/logo.svg" alt="DDNS">
@@ -38,6 +38,7 @@
       </div>
     </form>
   {{if .IsSetup}}</main>{{else}}</main>{{end}}
+  {{if not .IsSetup}}<script src="/static/config-events.js"></script>{{end}}
 </body>
 </html>
 {{end}}

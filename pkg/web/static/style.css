@@ -803,6 +803,18 @@ textarea {
   margin: 0;
 }
 
+.config-change-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.config-change-notice .link {
+  flex: 0 0 auto;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;

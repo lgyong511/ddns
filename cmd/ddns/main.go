@@ -78,10 +78,11 @@ func main() {
 
 	if *enableWeb {
 		webServer, err := web.New(web.Options{
-			ConfigPath:  path,
-			Reloader:    configManager,
-			ConfigStore: configManager,
-			Logs:        log.DefaultBuffer,
+			ConfigPath:    path,
+			Reloader:      configManager,
+			ConfigStore:   configManager,
+			ConfigChanges: configManager,
+			Logs:          log.DefaultBuffer,
 			CloudOperatorFactory: func(p config.Provider) (web.CloudOperator, error) {
 				return engine.NewOperator(p.Provider, p.KeyID, p.KeySecret)
 			},

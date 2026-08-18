@@ -46,6 +46,10 @@ type ConfigStore interface {
 	Save(*config.Config) error
 }
 
+type ConfigChangeRegistrar interface {
+	RegCallback(func())
+}
+
 type CloudOperator interface {
 	provider.Getter
 	provider.Deleter
@@ -57,6 +61,10 @@ type CloudOperatorFactory func(config.Provider) (CloudOperator, error)
 type Server struct {
 	configPath           string
 	configMu             sync.Mutex
+	configStateMu        sync.Mutex
+	configSnapshot       config.Config
+	configEvents         *configEventHub
+	configHeartbeat      time.Duration
 	reloader             Reloader
 	configStore          ConfigStore
 	logs                 *ddnslog.Buffer
@@ -79,6 +87,7 @@ type Options struct {
 	ConfigPath           string
 	Reloader             Reloader
 	ConfigStore          ConfigStore
+	ConfigChanges        ConfigChangeRegistrar
 	Logs                 *ddnslog.Buffer
 	CloudOperatorFactory CloudOperatorFactory
 }
@@ -95,6 +104,8 @@ func New(options Options) (*Server, error) {
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	server := &Server{
 		configPath:           options.ConfigPath,
+		configEvents:         newConfigEventHub(),
+		configHeartbeat:      defaultConfigHeartbeat,
 		reloader:             options.Reloader,
 		configStore:          options.ConfigStore,
 		logs:                 logs,
@@ -105,6 +116,12 @@ func New(options Options) (*Server, error) {
 		cloudCleanupQueue:    make(chan cloudCleanupJob, 16),
 		cloudCleanupCtx:      cleanupCtx,
 		cloudCleanupCancel:   cleanupCancel,
+	}
+	if options.ConfigChanges != nil {
+		if err := server.observeConfigChanges(options.ConfigChanges); err != nil {
+			cleanupCancel()
+			return nil, err
+		}
 	}
 	server.startCloudCleanupWorker()
 	return server, nil
@@ -153,6 +170,7 @@ func (s *Server) runCloudCleanup(job cloudCleanupJob) {
 // Close cancels the server lifecycle and waits for background cleanup to exit.
 func (s *Server) Close(ctx context.Context) error {
 	s.closeOnce.Do(func() {
+		s.configEvents.close()
 		s.cloudCleanupMu.Lock()
 		s.cloudCleanupClosed = true
 		s.cloudCleanupCancel()
@@ -191,6 +209,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.style(w, r)
 	case r.URL.Path == "/static/logo.svg":
 		s.logo(w, r)
+	case r.URL.Path == "/static/config-events.js":
+		s.configEventsScript(w, r)
 	case path == "setup":
 		s.setup(w, r)
 	case path == "import":
@@ -209,6 +229,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.requireAuth(s.logsPage)(w, r)
 	case path == "logs/stream":
 		s.requireAuth(s.logsStream)(w, r)
+	case path == "config/stream":
+		s.requireAuth(s.configStream)(w, r)
 	case path == "api/nics":
 		s.requireAuth(s.apiNics)(w, r)
 	case path == "providers/new":
@@ -294,7 +316,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		s.render(w, "login.html", map[string]any{"Title": "登录", "Imported": importSuccess(r)})
+		s.render(w, "login.html", map[string]any{
+			"Title":         "登录",
+			"Imported":      importSuccess(r),
+			"ConfigChanged": configChangeNotice(r),
+		})
 		return
 	}
 	if r.Method != http.MethodPost {

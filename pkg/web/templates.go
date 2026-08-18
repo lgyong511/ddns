@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-//go:embed templates/*.html static/style.css static/logo.svg
+//go:embed templates/*.html static/style.css static/logo.svg static/config-events.js
 var content embed.FS
 
 func parseTemplates() (*template.Template, error) {
@@ -38,6 +38,16 @@ func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 	data, err := content.ReadFile("static/logo.svg")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(data)
+}
+
+func (s *Server) configEventsScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	data, err := content.ReadFile("static/config-events.js")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
