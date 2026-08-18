@@ -727,34 +727,6 @@ func (s *Server) lockConfigForMutation(r *http.Request) func() {
 	return s.configMu.Unlock
 }
 
-func (s *Server) logsPage(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "logs.html", s.page(r, "系统日志", map[string]any{"Logs": s.logs.Snapshot()}))
-}
-
-func (s *Server) logsStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	ch, unsubscribe := s.logs.Subscribe()
-	defer unsubscribe()
-	for {
-		select {
-		case <-s.cloudCleanupCtx.Done():
-			return
-		case line := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", strings.ReplaceAll(line, "\n", " "))
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		}
-	}
-}
-
 func (s *Server) apiNics(w http.ResponseWriter, r *http.Request) {
 	nics, err := nicOptions()
 	if err != nil {

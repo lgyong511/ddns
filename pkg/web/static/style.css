@@ -835,14 +835,62 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  line-height: 1.35;
   background: #0b1020;
-  color: #a7f3d0;
+  color: #cbd5e1;
   border-radius: 8px;
-  padding: 18px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  padding: 10px 0;
   margin: 0;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.log-line {
+  min-height: 30px;
+  padding: 6px 16px 6px 13px;
+  border-left: 3px solid transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log-line-info {
+  background: #111827;
+  color: #d1fae5;
+}
+
+.log-line-info.log-line-alt {
+  background: #1e3a5f;
+}
+
+.log-line-warn {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, .14);
+  color: #fde68a;
+}
+
+.log-line-error {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, .17);
+  color: #fecaca;
+}
+
+.log-line-debug {
+  color: #94a3b8;
+}
+
+.log-line-other {
+  color: #cbd5e1;
+}
+
+.log-empty {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 24px;
+  color: #64748b;
+  text-align: center;
+}
+
+.log-empty[hidden] {
+  display: none;
 }
 
 @media (max-width: 760px) {

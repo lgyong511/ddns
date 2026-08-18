@@ -31,19 +31,56 @@
         <p>页面会自动追加 DDNS 引擎和 Web 控制台日志。</p>
       </div>
       <div class="actions">
-        <button class="button" type="button" onclick="document.querySelector('#logLines').textContent = ''">清屏</button>
+        <button class="button" id="clearLogs" type="button">清屏</button>
         <a class="button" href="/">返回</a>
       </div>
     </section>
-    <pre class="terminal" id="logLines">{{range .Logs}}{{.}}{{"\n"}}{{end}}</pre>
+    <div class="terminal" id="logLines" role="log" aria-live="polite" aria-relevant="additions text">
+      <div class="log-empty" id="logEmpty"{{if .Logs}} hidden{{end}}>暂无日志，等待运行事件。</div>
+      {{range .Logs}}<div class="log-line log-line-{{.Level}}{{if .Alternate}} log-line-alt{{end}}" data-log-line data-log-level="{{.Level}}">{{.Text}}</div>{{end}}
+    </div>
   </main>
   <script>
     const box = document.querySelector('#logLines');
+    const empty = document.querySelector('#logEmpty');
+    const clear = document.querySelector('#clearLogs');
+    const validLevels = new Set(['info', 'warn', 'error', 'debug', 'other']);
+    const maxLines = 300;
+    let infoCount = box.querySelectorAll('.log-line-info').length;
+
+    const appendLogLine = line => {
+      const level = validLevels.has(line.level) ? line.level : 'other';
+      const row = document.createElement('div');
+      row.className = `log-line log-line-${level}`;
+      row.dataset.logLine = 'true';
+      row.dataset.logLevel = level;
+      if (level === 'info') {
+        if (infoCount % 2 === 1) row.classList.add('log-line-alt');
+        infoCount += 1;
+      }
+      row.textContent = typeof line.text === 'string' ? line.text : '';
+      box.append(row);
+      empty.hidden = true;
+
+      const rows = box.querySelectorAll('[data-log-line]');
+      if (rows.length > maxLines) rows[0].remove();
+      box.scrollTop = box.scrollHeight;
+    };
+
+    clear.addEventListener('click', () => {
+      box.querySelectorAll('[data-log-line]').forEach(line => line.remove());
+      infoCount = 0;
+      empty.hidden = false;
+    });
+
     box.scrollTop = box.scrollHeight;
     const stream = new EventSource('/logs/stream');
     stream.onmessage = event => {
-      box.textContent += event.data + '\n';
-      box.scrollTop = box.scrollHeight;
+      try {
+        appendLogLine(JSON.parse(event.data));
+      } catch {
+        appendLogLine({text: event.data, level: 'other'});
+      }
     };
   </script>
   <script src="/static/config-events.js"></script>
