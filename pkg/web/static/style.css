@@ -264,6 +264,23 @@ body.logs-page .page-title {
   justify-content: flex-end;
 }
 
+.log-filter {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.log-filter select {
+  width: auto;
+  min-width: 108px;
+  min-height: 38px;
+  padding: 0 10px;
+}
+
 .actions form {
   margin: 0;
 }

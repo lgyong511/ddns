@@ -31,24 +31,52 @@
         <p>页面会自动追加 DDNS 引擎和 Web 控制台日志。</p>
       </div>
       <div class="actions">
+        <label class="log-filter">日志筛选<select id="logFilter" aria-label="日志级别筛选">
+          <option value="all">全部</option>
+          <option value="info">信息</option>
+          <option value="warn">警告</option>
+          <option value="error">错误</option>
+          <option value="debug">调试</option>
+          <option value="other">其他</option>
+        </select></label>
         <button class="button" id="clearLogs" type="button">清屏</button>
         <a class="button" href="/">返回</a>
       </div>
     </section>
     <div class="terminal" id="logLines" role="log" aria-live="polite" aria-relevant="additions text">
       <div class="log-empty" id="logEmpty"{{if .Logs}} hidden{{end}}>暂无日志，等待运行事件。</div>
+      <div class="log-empty" id="logFilteredEmpty" hidden>当前筛选条件下暂无日志。</div>
       {{range .Logs}}<div class="log-line log-line-{{.Level}}{{if .Alternate}} log-line-alt{{end}}" data-log-line data-log-level="{{.Level}}">{{.Text}}</div>{{end}}
     </div>
   </main>
   <script>
     const box = document.querySelector('#logLines');
     const empty = document.querySelector('#logEmpty');
+    const filteredEmpty = document.querySelector('#logFilteredEmpty');
     const clear = document.querySelector('#clearLogs');
+    const filter = document.querySelector('#logFilter');
     const validLevels = new Set(['info', 'warn', 'error', 'debug', 'other']);
     const maxLines = 300;
+    let selectedLevel = 'all';
     let infoCount = box.querySelectorAll('.log-line-info').length;
 
+    const updateEmptyState = () => {
+      const rows = [...box.querySelectorAll('[data-log-line]')];
+      const visibleRows = rows.filter(row => !row.hidden);
+      empty.hidden = rows.length > 0;
+      filteredEmpty.hidden = rows.length === 0 || visibleRows.length > 0;
+    };
+
+    const applyFilter = () => {
+      selectedLevel = filter.value;
+      box.querySelectorAll('[data-log-line]').forEach(row => {
+        row.hidden = selectedLevel !== 'all' && row.dataset.logLevel !== selectedLevel;
+      });
+      updateEmptyState();
+    };
+
     const appendLogLine = line => {
+      const followLatest = box.scrollHeight - box.scrollTop - box.clientHeight <= 24;
       const level = validLevels.has(line.level) ? line.level : 'other';
       const row = document.createElement('div');
       row.className = `log-line log-line-${level}`;
@@ -59,20 +87,24 @@
         infoCount += 1;
       }
       row.textContent = typeof line.text === 'string' ? line.text : '';
+      row.hidden = selectedLevel !== 'all' && level !== selectedLevel;
       box.append(row);
-      empty.hidden = true;
 
       const rows = box.querySelectorAll('[data-log-line]');
       if (rows.length > maxLines) rows[0].remove();
-      box.scrollTop = box.scrollHeight;
+      updateEmptyState();
+      if (followLatest) box.scrollTop = box.scrollHeight;
     };
+
+    filter.addEventListener('change', applyFilter);
 
     clear.addEventListener('click', () => {
       box.querySelectorAll('[data-log-line]').forEach(line => line.remove());
       infoCount = 0;
-      empty.hidden = false;
+      updateEmptyState();
     });
 
+    applyFilter();
     box.scrollTop = box.scrollHeight;
     const stream = new EventSource('/logs/stream');
     stream.onmessage = event => {

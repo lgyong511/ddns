@@ -77,6 +77,10 @@ func TestLogsPageRendersEscapedRowsAndEmptyState(t *testing.T) {
 		checks := []string{
 			`role="log"`,
 			`aria-live="polite"`,
+			`id="logFilter"`,
+			`<option value="all">全部</option>`,
+			`<option value="error">错误</option>`,
+			`id="logFilteredEmpty" hidden`,
 			`class="log-line log-line-info"`,
 			`class="log-line log-line-warn"`,
 			`class="log-line log-line-info log-line-alt"`,
@@ -154,6 +158,11 @@ func TestLogsPageScriptUsesSafeRowsAndResetsAlternation(t *testing.T) {
 	page := string(data)
 	checks := []string{
 		"row.textContent =",
+		"const followLatest = box.scrollHeight - box.scrollTop - box.clientHeight <= 24",
+		"if (followLatest) box.scrollTop = box.scrollHeight",
+		"row.hidden = selectedLevel !== 'all' && level !== selectedLevel",
+		"filter.addEventListener('change', applyFilter)",
+		"当前筛选条件下暂无日志。",
 		"infoCount = 0",
 		"const maxLines = 300",
 		"JSON.parse(event.data)",
