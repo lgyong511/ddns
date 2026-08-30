@@ -137,6 +137,111 @@ func TestPageIncludesVersion(t *testing.T) {
 	}
 }
 
+func TestServerHandlerRestrictsWebClientAddresses(t *testing.T) {
+	server := &Server{}
+	handler := server.Handler()
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		path       string
+		wantStatus int
+		headers    http.Header
+	}{
+		{
+			name:       "loopback IPv4",
+			remoteAddr: "127.0.0.1:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "10 private IPv4",
+			remoteAddr: "10.0.0.1:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "172 private IPv4",
+			remoteAddr: "172.16.0.1:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "192 private IPv4",
+			remoteAddr: "192.168.0.1:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "public IPv4",
+			remoteAddr: "203.0.113.1:1234",
+			path:       "/login",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "link-local IPv4",
+			remoteAddr: "169.254.1.1:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "CGNAT IPv4",
+			remoteAddr: "100.64.0.1:1234",
+			path:       "/logs/stream",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "IPv6",
+			remoteAddr: "[::1]:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "IPv4 mapped IPv6",
+			remoteAddr: "[::ffff:192.168.0.1]:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "missing remote address",
+			remoteAddr: "",
+			path:       "/static/style.css",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "malformed remote address",
+			remoteAddr: "192.168.0.1",
+			path:       "/static/style.css",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "forwarded headers ignored",
+			remoteAddr: "203.0.113.1:1234",
+			path:       "/static/style.css",
+			wantStatus: http.StatusForbidden,
+			headers: http.Header{
+				"X-Forwarded-For": {"192.168.0.1"},
+				"X-Real-IP":       {"192.168.0.1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			request.RemoteAddr = tt.remoteAddr
+			request.Header = tt.headers
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
 func TestPrepareDefaultFileMigratesValidLegacyConfig(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "conf.yaml")

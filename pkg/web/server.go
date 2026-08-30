@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,8 +34,14 @@ const (
 )
 
 var (
-	ipv4Preset = "https://myip.ipip.net, https://ddns.oray.com/checkip, https://ip.3322.net, https://4.ipw.cn, https://v4.yinghualuo.cn/bejson"
-	ipv6Preset = "https://speed.neu6.edu.cn/getIP.php, https://v6.ident.me, https://6.ipw.cn, https://v6.yinghualuo.cn/bejson"
+	ipv4Preset             = "https://myip.ipip.net, https://ddns.oray.com/checkip, https://ip.3322.net, https://4.ipw.cn, https://v4.yinghualuo.cn/bejson"
+	ipv6Preset             = "https://speed.neu6.edu.cn/getIP.php, https://v6.ident.me, https://6.ipw.cn, https://v6.yinghualuo.cn/bejson"
+	webAllowedIPv4Prefixes = []netip.Prefix{
+		netip.MustParsePrefix("127.0.0.0/8"),
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("172.16.0.0/12"),
+		netip.MustParsePrefix("192.168.0.0/16"),
+	}
 )
 
 type Reloader interface {
@@ -190,7 +197,30 @@ func (s *Server) Close(ctx context.Context) error {
 }
 
 func (s *Server) Handler() http.Handler {
-	return http.HandlerFunc(s.ServeHTTP)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAllowedWebClient(r.RemoteAddr) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		s.ServeHTTP(w, r)
+	})
+}
+
+func isAllowedWebClient(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		return false
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil || !address.Is4() {
+		return false
+	}
+	for _, prefix := range webAllowedIPv4Prefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
