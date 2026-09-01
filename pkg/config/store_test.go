@@ -191,6 +191,54 @@ webhook:
 	}
 }
 
+func TestPrepareEmptyFile(t *testing.T) {
+	t.Run("creates loadable config with restricted permissions", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "nested", "config.yaml")
+		created, err := PrepareEmptyFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !created {
+			t.Fatal("PrepareEmptyFile() did not report creating the config")
+		}
+		cfg, err := LoadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Providers) != 0 || len(cfg.Webhook.Headers) != 0 || cfg.Auth.PasswordHash != "" {
+			t.Fatalf("created config = %#v, want empty setup config", cfg)
+		}
+		if info, err := os.Stat(filepath.Dir(path)); err != nil {
+			t.Fatal(err)
+		} else if got := info.Mode().Perm(); got != 0700 {
+			t.Fatalf("config directory permissions = %o, want 700", got)
+		}
+		if info, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		} else if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("config file permissions = %o, want 600", got)
+		}
+	})
+
+	t.Run("preserves existing file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		original := []byte("providers: []\nwebhook:\n  headers: []\n# keep\n")
+		if err := os.WriteFile(path, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+		created, err := PrepareEmptyFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created {
+			t.Fatal("PrepareEmptyFile() reported replacing an existing config")
+		}
+		if got := mustReadFile(t, path); string(got) != string(original) {
+			t.Fatalf("existing config changed to %q", got)
+		}
+	})
+}
+
 func TestConfigFilesUseRestrictedPermissions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config", "config.yaml")

@@ -69,6 +69,21 @@ func PrepareDefaultFile(path string, legacyPath string) error {
 	return createEmptyConfig(path)
 }
 
+// PrepareEmptyFile 在指定路径不存在时创建最小配置。
+func PrepareEmptyFile(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := createEmptyConfig(path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func createEmptyConfig(path string) error {
 	empty := Config{Providers: []Provider{}, Webhook: Webhook{Headers: []string{}}}
 	data, err := yaml.Marshal(&empty)

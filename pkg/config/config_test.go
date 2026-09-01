@@ -243,10 +243,11 @@ func TestCloneConfigDeepCopiesSubDomains(t *testing.T) {
 
 func TestManagerCallbacksAllowReentry(t *testing.T) {
 	tests := []struct {
-		name  string
-		setup func(*Manager, string, *Config) error
-		call  func(*Manager, *Config) error
-		retry func(*Manager, *Config) error
+		name       string
+		setup      func(*Manager, string, *Config) error
+		beforeCall func(*Manager, string, *Config) error
+		call       func(*Manager, *Config) error
+		retry      func(*Manager, *Config) error
 	}{
 		{
 			name: "save",
@@ -272,8 +273,11 @@ func TestManagerCallbacksAllowReentry(t *testing.T) {
 				if err := manager.Load(path); err != nil {
 					return err
 				}
+				return nil
+			},
+			beforeCall: func(_ *Manager, path string, cfg *Config) error {
 				cfg.Webhook.URL = "https://changed.example.com"
-				data, err = yaml.Marshal(cfg)
+				data, err := yaml.Marshal(cfg)
 				if err != nil {
 					return err
 				}
@@ -289,7 +293,8 @@ func TestManagerCallbacksAllowReentry(t *testing.T) {
 			manager := NewManager()
 			t.Cleanup(func() { _ = manager.Close() })
 			cfg := validConfig()
-			if err := tt.setup(manager, filepath.Join(t.TempDir(), "config.yaml"), &cfg); err != nil {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := tt.setup(manager, configPath, &cfg); err != nil {
 				t.Fatal(err)
 			}
 			var once sync.Once
@@ -297,6 +302,11 @@ func TestManagerCallbacksAllowReentry(t *testing.T) {
 			manager.RegCallback(func() {
 				once.Do(func() { callbackDone <- tt.retry(manager, &cfg) })
 			})
+			if tt.beforeCall != nil {
+				if err := tt.beforeCall(manager, configPath, &cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			callDone := make(chan error, 1)
 			go func() { callDone <- tt.call(manager, &cfg) }()

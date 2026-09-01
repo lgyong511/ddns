@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"ddns/pkg/config"
-	"ddns/pkg/engine"
-	"ddns/pkg/log"
-	"ddns/pkg/version"
-	"ddns/pkg/web"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,6 +13,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"ddns/pkg/config"
+	"ddns/pkg/engine"
+	"ddns/pkg/log"
+	"ddns/pkg/version"
+	"ddns/pkg/web"
 )
 
 const (
@@ -51,14 +53,18 @@ func main() {
 		slog.Error("无法解析配置文件路径", "error", err)
 		os.Exit(1)
 	}
-	if explicit {
-		if _, err := os.Stat(path); err != nil {
-			slog.Error("显式指定的配置文件不可用", "config", path, "error", err)
-			os.Exit(1)
-		}
-	} else if err := config.PrepareDefaultFile(path, filepath.Join(exeDir, "conf.yaml")); err != nil {
-		slog.Error("无法初始化默认配置文件", "config", path, "error", err)
+	created, err := prepareConfigFile(
+		path,
+		explicit,
+		*enableWeb,
+		filepath.Join(exeDir, "conf.yaml"),
+	)
+	if err != nil {
+		slog.Error("无法准备配置文件", "config", path, "error", err)
 		os.Exit(1)
+	}
+	if created {
+		slog.Info("已为 Web 首次设置创建空配置", "config", path)
 	}
 
 	// 加载配置文件
@@ -147,6 +153,30 @@ func main() {
 func resolveConfigPath(path string, exeDir string) (string, error) {
 	resolved, _, err := config.ResolvePath(path, exeDir)
 	return resolved, err
+}
+
+func prepareConfigFile(path string, explicit bool, enableWeb bool, legacyPath string) (bool, error) {
+	if !explicit {
+		return false, config.PrepareDefaultFile(path, legacyPath)
+	}
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return false, errors.New("显式指定的配置路径不是普通文件")
+		}
+		return false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("检查显式指定的配置文件: %w", err)
+	}
+	if !enableWeb {
+		return false, fmt.Errorf("显式指定的配置文件不存在: %w", err)
+	}
+	created, err := config.PrepareEmptyFile(path)
+	if err != nil {
+		return false, fmt.Errorf("创建 Web 首次设置配置: %w", err)
+	}
+	return created, nil
 }
 
 func executableDir() (string, error) {
