@@ -6,23 +6,51 @@ import (
 )
 
 func TestNewSelector(t *testing.T) {
-	addrs := []netip.Addr{netip.MustParseAddr("2001:db8::2"), netip.MustParseAddr("2001:db8::3")}
+	addrs := []netip.Addr{
+		netip.MustParseAddr("2001:db8:1::2"),
+		netip.MustParseAddr("2001:db8:2::3"),
+	}
 	tests := []struct {
 		name string
 		rule string
 		want string
 	}{
-		{name: "default", want: "2001:db8::2"},
-		{name: "index", rule: "index@2", want: "2001:db8::3"},
-		{name: "invalid index", rule: "index@0", want: "2001:db8::2"},
-		{name: "contain", rule: "contain@::3", want: "2001:db8::3"},
-		{name: "splice", rule: "splice@2@::1", want: "2001:db8::1"},
-		{name: "unknown", rule: "unexpected", want: "2001:db8::2"},
+		{name: "default", want: "2001:db8:1::2"},
+		{name: "first", rule: "first", want: "2001:db8:1::2"},
+		{name: "index", rule: "index@2", want: "2001:db8:2::3"},
+		{name: "contain", rule: "contain@2::", want: "2001:db8:2::3"},
+		{name: "prefix", rule: "prefix@2001:db8:2::/64", want: "2001:db8:2::3"},
+		{name: "splice", rule: "splice@2@::1", want: "2001:db8:2::1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NewSelector(tt.rule).Select(addrs).String(); got != tt.want {
+			selector, err := NewSelector(tt.rule)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := selector.Select(addrs).String(); got != tt.want {
 				t.Fatalf("NewSelector(%q).Select() = %q, want %q", tt.rule, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewSelectorRejectsInvalidRules(t *testing.T) {
+	rules := []string{
+		"unexpected",
+		"index@0",
+		"index@invalid",
+		"contain@",
+		"prefix@invalid",
+		"splice@1",
+		"splice@0@::1",
+		"splice@1@invalid",
+		"splice@1@192.0.2.1",
+	}
+	for _, rule := range rules {
+		t.Run(rule, func(t *testing.T) {
+			if _, err := NewSelector(rule); err == nil {
+				t.Fatalf("NewSelector(%q) accepted invalid rule", rule)
 			}
 		})
 	}

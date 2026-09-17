@@ -188,7 +188,7 @@ providers:
         getType: nic
         getValue: br-lan
         interval: 30
-        rule: "2408"
+        rule: "contain@2408"
       - name: Nas_duid_6
         subDomains:
           - test1.lgyong.cc
@@ -232,7 +232,7 @@ providers:
         getType: nic
         getValue: br-lan
         interval: 30
-        rule: "2408"
+        rule: "contain@2408"
       - name: Nas_duid_6
         subDomains:
           - test1.lgyong.cc
@@ -543,10 +543,14 @@ records:
 ```
 
 ## rule说明
-- 1，空值选择第一个IP地址
-- 2，index@n, 选择第n个IP地址，n从1开始计数，超出范围选择第一个IP地址
-- 3，splice@n@后缀，选择第n个IP地址的前64位拼接后缀，后缀可以是8字节的数组、切片，或者标准的IPv6后缀字符串（如 "::1"、“::9009:d09f:fd09:751d“ 或 "0:0:0:1"）
-- 4，contain@substr，选择包含substr的第一个IP地址
+
+- 空值或 `first`：选择第一个 IP 地址。
+- `index@n`：选择第 n 个 IP 地址，n 从 1 开始计数，超出范围选择第一个地址。
+- `splice@n@后缀`：使用第 n 个 IPv6 地址的前 64 位拼接后缀，例如 `splice@1@::1`。
+- `contain@substr`：选择文本中包含 `substr` 的第一个 IP 地址。
+- `prefix@CIDR`：选择位于指定 CIDR 网段内的第一个 IP 地址。
+
+规则名称、索引、CIDR 或拼接后缀无效时，配置校验会直接报错，不再静默退化为第一个地址。
 
 ## 注意事项
 

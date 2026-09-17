@@ -2,12 +2,13 @@ package engine
 
 import (
 	"context"
-	"ddns/pkg/addr"
-	"ddns/pkg/config"
 	"fmt"
 	"net/netip"
 	"sync"
 	"time"
+
+	"ddns/pkg/addr"
+	"ddns/pkg/config"
 )
 
 // SubDomainInfo 子域名同步缓存，以子域名为最新缓存对象。
@@ -44,7 +45,10 @@ func NewRecordState(config *config.Record) (*RecordState, error) {
 	if err != nil {
 		return nil, err
 	}
-	selector := addr.NewSelector(config.Rule)
+	selector, err := addr.NewSelector(config.Rule)
+	if err != nil {
+		return nil, err
+	}
 
 	return &RecordState{
 		fetcher:  fetcher,

@@ -1,12 +1,13 @@
 package config
 
 import (
-	"ddns/pkg/addr"
-	"ddns/pkg/provider"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"ddns/pkg/addr"
+	"ddns/pkg/provider"
 
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/net/idna"
@@ -248,6 +249,9 @@ func (c *Config) Validate() error {
 			}
 			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].rule", r.Rule, MaxRuleBytes); err != nil {
 				errs = append(errs, err)
+			}
+			if _, err := addr.NewSelector(r.Rule); err != nil {
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].rule 无效: %w", p.Name, j, err))
 			}
 			if r.IPVersion != provider.IPv4 && r.IPVersion != provider.IPv6 {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].ipVersion 无效，请填写 4 或 6", p.Name, j))

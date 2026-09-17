@@ -167,6 +167,7 @@ func TestConfigValidateEnumerationsAndRanges(t *testing.T) {
 			cfg.Providers[0].Records[0].GetValue = "eth0"
 			cfg.Providers[0].Records[0].FetchStrategy = "ordered"
 		}, "fetchStrategy 仅支持 URL"},
+		{"selector rule", func(cfg *Config) { cfg.Providers[0].Records[0].Rule = "2408" }, ".rule 无效"},
 	}
 
 	for _, tt := range tests {

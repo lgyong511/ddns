@@ -4,7 +4,22 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"ddns/pkg/config"
+	"ddns/pkg/provider"
 )
+
+func TestNewRecordStateRejectsInvalidSelector(t *testing.T) {
+	record := &config.Record{
+		IPVersion: provider.IPv4,
+		GetType:   "url",
+		GetValue:  "https://example.com",
+		Rule:      "unexpected",
+	}
+	if _, err := NewRecordState(record); err == nil {
+		t.Fatal("NewRecordState() accepted an invalid selector")
+	}
+}
 
 func TestRecordStateCacheAndRetry(t *testing.T) {
 	state := &RecordState{cacheSubDomain: map[string]SubDomainInfo{}}

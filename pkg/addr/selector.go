@@ -1,6 +1,7 @@
 package addr
 
 import (
+	"fmt"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -8,10 +9,11 @@ import (
 
 // Selector 选择器，用于选择满足条件的IP地址。
 
-//规则1，空值选择第一个IP地址
-//规则2，index@n, 选择第n个IP地址，n从1开始计数，超出范围选择第一个IP地址
-//规则3，splice@n@后缀，选择第n个IP地址的前64位拼接后缀，后缀可以是8字节的数组、切片，或者标准的IPv6后缀字符串（如 "::1"、“::9209:d0ff:fe09:781d“ 或 "0:0:0:1"）
-//规则4，contain@substr，选择包含substr的第一个IP地址
+// 规则1，空值或 first 选择第一个IP地址
+// 规则2，index@n, 选择第n个IP地址，n从1开始计数，超出范围选择第一个IP地址
+// 规则3，splice@n@后缀，选择第n个IP地址的前64位拼接IPv6后缀
+// 规则4，contain@substr，选择包含substr的第一个IP地址
+// 规则5，prefix@CIDR，选择位于指定网段内的第一个IP地址
 
 // Selector 接口定义了一个Select方法，用于从给定的IP地址列表中选择一个满足特定条件的地址。
 // 实现这个接口的类型可以根据不同的选择规则来筛选IP地址，例如选择第n个地址、选择包含特定子串的地址，或者根据IPv6地址的前缀和后缀进行组合选择。
@@ -81,6 +83,25 @@ type Contain struct {
 	Substr string // 要包含的子串
 }
 
+// PrefixSelector 从给定的地址列表中选择位于指定网段内的第一个地址。
+type PrefixSelector struct {
+	Prefix netip.Prefix
+}
+
+// NewPrefixSelector 创建一个网段选择器。
+func NewPrefixSelector(prefix netip.Prefix) *PrefixSelector {
+	return &PrefixSelector{Prefix: prefix.Masked()}
+}
+
+func (s *PrefixSelector) Select(addrs []netip.Addr) netip.Addr {
+	for _, addr := range addrs {
+		if s.Prefix.Contains(addr.Unmap()) {
+			return addr
+		}
+	}
+	return netip.Addr{}
+}
+
 // NewContain 创建一个新的Contain选择器，指定要包含的子串。
 func NewContain(substr string) *Contain {
 	return &Contain{Substr: substr}
@@ -98,37 +119,61 @@ func (s *Contain) Select(addrs []netip.Addr) netip.Addr {
 
 // 工厂函数，用于根据规则字符串创建相应的Selector实例。
 // 规则字符串的格式如下：
-// - 空值：选择第一个IP地址。
+// - 空值或 "first"：选择第一个IP地址。
 // - "index@n"：选择第n个IP地址，n从1开始计数。
-// - "splice@n@后缀"：选择第n个IP地址的前64位拼接后缀，后缀可以是8字节的数组、切片，或者标准的IPv6后缀字符串（如 "::1"、“::9209:d0ff:fe09:781d“ 或 "0:0:0:1"）。
+// - "splice@n@后缀"：选择第n个IP地址的前64位拼接IPv6后缀。
 // - "contain@substr"：选择包含substr的第一个IP地址。
-func NewSelector(rule string) Selector {
-	if rule == "" {
-		return &Index{Index: 1}
+// - "prefix@CIDR"：选择位于指定网段内的第一个IP地址。
+func NewSelector(rule string) (Selector, error) {
+	rule = strings.TrimSpace(rule)
+	if rule == "" || rule == "first" {
+		return NewIndex(1), nil
 	}
-	if strings.HasPrefix(rule, "index@") {
-		indexStr := strings.TrimPrefix(rule, "index@")
-		index, err := strconv.Atoi(indexStr)
-		if err != nil || index <= 0 {
-			return &Index{Index: 1}
+
+	name, value, found := strings.Cut(rule, "@")
+	if !found {
+		return nil, fmt.Errorf("地址筛选规则无效: %q", rule)
+	}
+	switch name {
+	case "index":
+		index, err := parsePositiveIndex(value)
+		if err != nil {
+			return nil, fmt.Errorf("index 规则无效: %w", err)
 		}
-		return &Index{Index: index}
-	}
-	if strings.HasPrefix(rule, "splice@") {
-		parts := strings.SplitN(strings.TrimPrefix(rule, "splice@"), "@", 2)
-		if len(parts) != 2 {
-			return &Splice{Index: 1, Suffix: ""}
+		return NewIndex(index), nil
+	case "contain":
+		if value == "" {
+			return nil, fmt.Errorf("contain 规则的匹配文本不能为空")
 		}
-		index, err := strconv.Atoi(parts[0])
-		if err != nil || index <= 0 {
-			index = 1
+		return NewContain(value), nil
+	case "prefix":
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("prefix 规则的 CIDR 无效: %w", err)
 		}
-		return &Splice{Index: index, Suffix: parts[1]}
+		return NewPrefixSelector(prefix), nil
+	case "splice":
+		indexValue, suffix, found := strings.Cut(value, "@")
+		if !found || suffix == "" {
+			return nil, fmt.Errorf("splice 规则必须使用 splice@n@后缀 格式")
+		}
+		index, err := parsePositiveIndex(indexValue)
+		if err != nil {
+			return nil, fmt.Errorf("splice 规则索引无效: %w", err)
+		}
+		if _, err := parseIPv6Suffix(suffix); err != nil {
+			return nil, fmt.Errorf("splice 规则后缀无效: %w", err)
+		}
+		return NewSplice(index, suffix), nil
+	default:
+		return nil, fmt.Errorf("不支持的地址筛选规则: %s", name)
 	}
-	if strings.HasPrefix(rule, "contain@") {
-		substr := strings.TrimPrefix(rule, "contain@")
-		return &Contain{Substr: substr}
+}
+
+func parsePositiveIndex(value string) (int, error) {
+	index, err := strconv.Atoi(value)
+	if err != nil || index <= 0 {
+		return 0, fmt.Errorf("索引必须是大于 0 的整数")
 	}
-	// 都不匹配返回Index选择器，选择第一个IP地址
-	return &Index{Index: 1}
+	return index, nil
 }

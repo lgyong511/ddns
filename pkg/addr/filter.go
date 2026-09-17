@@ -98,7 +98,7 @@ func FilterAddrs(addrs []netip.Addr, filters ...Filter) []netip.Addr {
 }
 
 // SpliceIPv6 取 IPv6 地址的前 64 位前缀，拼接指定的后缀。
-// suffix 可以是 8 字节的数组、切片，或者标准的 IPv6 后缀字符串（如 "::1"、“::9209:d0ff:fe09:781d“ 或 "0:0:0:1"）
+// suffix 是 IPv6 后缀字符串，例如 "::1"、"::9209:d0ff:fe09:781d" 或 "0:0:0:1"。
 func SpliceIPv6(addr netip.Addr, suffix string) (netip.Addr, error) {
 	// 统一解包并确保是 IPv6
 	addr = addr.Unmap()
@@ -106,18 +106,9 @@ func SpliceIPv6(addr netip.Addr, suffix string) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("SpliceIPv6: IP地址不是IPv6")
 	}
 
-	// 解析后缀地址（例如将 "::1"、“::9209:d0ff:fe09:781d“ 解析为标准的 netip.Addr）
-	suffixAddr, err := netip.ParseAddr(suffix)
+	suffixAddr, err := parseIPv6Suffix(suffix)
 	if err != nil {
-		// 移除开头可能存在的任意多个冒号（兼容 ":" 或 "::"）
-		cleanSuffix := strings.TrimLeft(suffix, ":")
-
-		// 统一在前面加上标准的双冒号 "::" 重新解析
-		var retryErr error
-		suffixAddr, retryErr = netip.ParseAddr("::" + cleanSuffix)
-		if retryErr != nil {
-			return netip.Addr{}, fmt.Errorf("SpliceIPv6: 后缀格式非法: %w", err)
-		}
+		return netip.Addr{}, err
 	}
 
 	//  提取两者的字节数组
@@ -131,4 +122,19 @@ func SpliceIPv6(addr netip.Addr, suffix string) (netip.Addr, error) {
 
 	// 重新生成 Addr 对象（带上原始的 Zone，如果有的话）
 	return netip.AddrFrom16(finalBytes).WithZone(addr.Zone()), nil
+}
+
+func parseIPv6Suffix(suffix string) (netip.Addr, error) {
+	suffixAddr, err := netip.ParseAddr(suffix)
+	if err != nil {
+		cleanSuffix := strings.TrimLeft(suffix, ":")
+		suffixAddr, err = netip.ParseAddr("::" + cleanSuffix)
+		if err != nil {
+			return netip.Addr{}, fmt.Errorf("SpliceIPv6: 后缀格式非法: %w", err)
+		}
+	}
+	if !suffixAddr.Is6() {
+		return netip.Addr{}, fmt.Errorf("SpliceIPv6: 后缀必须是 IPv6 格式")
+	}
+	return suffixAddr, nil
 }
