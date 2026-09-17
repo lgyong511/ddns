@@ -1316,6 +1316,27 @@ func TestParseProviderRecordsRejectsMismatchedFields(t *testing.T) {
 	}
 }
 
+func TestParseRecordFetchStrategy(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/providers/0/records", strings.NewReader(url.Values{
+		"name":          {"nas"},
+		"subDomains":    {"nas.example.com"},
+		"ipVersion":     {"4"},
+		"ttl":           {"600"},
+		"interval":      {"30"},
+		"getType":       {"url"},
+		"getValue":      {"https://example.com"},
+		"fetchStrategy": {"majority"},
+	}.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	record, err := parseRecord(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FetchStrategy != "majority" {
+		t.Fatalf("fetchStrategy = %q, want majority", record.FetchStrategy)
+	}
+}
+
 func TestParseProviderRecordsRejectsEveryMismatchedField(t *testing.T) {
 	fieldNames := []string{"recordSubDomains", "recordIPVersion", "recordTTL", "recordInterval", "recordGetValue", "recordRule"}
 	for _, fieldName := range fieldNames {

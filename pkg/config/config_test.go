@@ -79,6 +79,22 @@ func TestDurationFieldsMarshalAsNumbers(t *testing.T) {
 	}
 }
 
+func TestRecordFetchStrategyRoundTrip(t *testing.T) {
+	cfg := validConfig()
+	cfg.Providers[0].Records[0].FetchStrategy = "majority"
+	data, err := yaml.Marshal(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Config
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.Providers[0].Records[0].FetchStrategy; got != "majority" {
+		t.Fatalf("fetchStrategy = %q, want majority", got)
+	}
+}
+
 func TestConfigValidateStringLimits(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -145,6 +161,12 @@ func TestConfigValidateEnumerationsAndRanges(t *testing.T) {
 		{"interval", func(cfg *Config) { cfg.Providers[0].Records[0].Interval = 61 }, ".interval 无效"},
 		{"force interval", func(cfg *Config) { cfg.Providers[0].ForceInterval = 31 }, ".forceInterval 无效"},
 		{"duid ipv4", func(cfg *Config) { cfg.Providers[0].Records[0].GetType = "duid" }, "duid 仅支持 IPv6"},
+		{"URL strategy", func(cfg *Config) { cfg.Providers[0].Records[0].FetchStrategy = "random" }, ".fetchStrategy 无效"},
+		{"strategy on NIC", func(cfg *Config) {
+			cfg.Providers[0].Records[0].GetType = "nic"
+			cfg.Providers[0].Records[0].GetValue = "eth0"
+			cfg.Providers[0].Records[0].FetchStrategy = "ordered"
+		}, "fetchStrategy 仅支持 URL"},
 	}
 
 	for _, tt := range tests {

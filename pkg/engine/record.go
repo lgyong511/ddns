@@ -36,7 +36,7 @@ type RecordState struct {
 }
 
 func NewRecordState(config *config.Record) (*RecordState, error) {
-	fetcher, err := addr.NewFetcher(config.GetType, config.GetValue)
+	fetcher, err := addr.NewFetcher(config.GetType, config.GetValue, config.FetchStrategy)
 	if err != nil {
 		return nil, err
 	}

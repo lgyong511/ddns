@@ -495,9 +495,18 @@ records:
     ttl: 600
     getType: url
     getValue: https://myip.ipip.net,https://ip.cn
+    fetchStrategy: ordered
     interval: 30
     rule: ""
 ```
+
+多个 URL 并发请求，可通过 `fetchStrategy` 控制结果处理方式：
+
+- `ordered`（默认）：按配置中的 URL 顺序汇总成功响应，适合与 `index@n` 配合。
+- `first-success`：采用最先成功的响应并取消其他请求，优先降低等待时间。
+- `majority`：按成功端点对每个 IP 计票，只保留获得严格多数票的地址。
+
+单条记录最多配置 16 个 URL；未填写 `fetchStrategy` 时按 `ordered` 处理。
 
 ### NIC 方式
 

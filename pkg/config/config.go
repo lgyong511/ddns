@@ -1,6 +1,7 @@
 package config
 
 import (
+	"ddns/pkg/addr"
 	"ddns/pkg/provider"
 	"errors"
 	"fmt"
@@ -115,6 +116,8 @@ type Record struct {
 	GetType string `yaml:"getType" mapstructure:"getType"`
 	//对应的值，如：ipconfig、https://ip.cn
 	GetValue string `yaml:"getValue" mapstructure:"getValue"`
+	// URL 多端点获取策略
+	FetchStrategy string `yaml:"fetchStrategy" mapstructure:"fetchStrategy"`
 	//记录同步和获取IP地址的周期，单位秒
 	Interval int64 `yaml:"interval" mapstructure:"interval"`
 	//筛选IP地址的规则
@@ -123,14 +126,15 @@ type Record struct {
 
 func (r *Record) UnmarshalYAML(value *yaml.Node) error {
 	type recordYAML struct {
-		Name       string           `yaml:"name"`
-		SubDomains []string         `yaml:"subDomains"`
-		IPVersion  provider.Version `yaml:"ipVersion"`
-		TTL        int64            `yaml:"ttl"`
-		GetType    string           `yaml:"getType"`
-		GetValue   string           `yaml:"getValue"`
-		Interval   int64            `yaml:"interval"`
-		Rule       string           `yaml:"rule"`
+		Name          string           `yaml:"name"`
+		SubDomains    []string         `yaml:"subDomains"`
+		IPVersion     provider.Version `yaml:"ipVersion"`
+		TTL           int64            `yaml:"ttl"`
+		GetType       string           `yaml:"getType"`
+		GetValue      string           `yaml:"getValue"`
+		FetchStrategy string           `yaml:"fetchStrategy"`
+		Interval      int64            `yaml:"interval"`
+		Rule          string           `yaml:"rule"`
 	}
 	var raw recordYAML
 	if err := value.Decode(&raw); err != nil {
@@ -138,7 +142,8 @@ func (r *Record) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*r = Record{
 		Name: raw.Name, SubDomains: raw.SubDomains, IPVersion: raw.IPVersion, TTL: raw.TTL,
-		GetType: raw.GetType, GetValue: raw.GetValue, Interval: raw.Interval, Rule: raw.Rule,
+		GetType: raw.GetType, GetValue: raw.GetValue, FetchStrategy: raw.FetchStrategy,
+		Interval: raw.Interval, Rule: raw.Rule,
 	}
 	return nil
 }
@@ -230,6 +235,16 @@ func (c *Config) Validate() error {
 			}
 			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].getValue", r.GetValue, maxGetValueBytes(r.GetType)); err != nil {
 				errs = append(errs, err)
+			}
+			if r.GetType == "url" {
+				if _, err := addr.ParseURLStrategy(r.FetchStrategy); err != nil {
+					errs = append(errs, fmt.Errorf("providers[%s].records[%d].fetchStrategy 无效: %w", p.Name, j, err))
+				}
+				if err := addr.ValidateURLs(r.GetValue); err != nil {
+					errs = append(errs, fmt.Errorf("providers[%s].records[%d].getValue 无效: %w", p.Name, j, err))
+				}
+			} else if strings.TrimSpace(r.FetchStrategy) != "" {
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].fetchStrategy 仅支持 URL 获取方式", p.Name, j))
 			}
 			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].rule", r.Rule, MaxRuleBytes); err != nil {
 				errs = append(errs, err)

@@ -28,7 +28,17 @@ type Fetcher interface {
 	Fetch(context.Context) ([]netip.Addr, error)
 }
 
-func NewFetcher(getType string, getValue string) (Fetcher, error) {
+func NewFetcher(getType string, getValue string, fetchStrategy ...string) (Fetcher, error) {
+	if len(fetchStrategy) > 1 {
+		return nil, fmt.Errorf("addr NewFetcher: 获取策略参数过多")
+	}
+	strategy := ""
+	if len(fetchStrategy) == 1 {
+		strategy = fetchStrategy[0]
+	}
+	if getType != "url" && strategy != "" {
+		return nil, fmt.Errorf("addr NewFetcher: %s 获取方式不支持获取策略", getType)
+	}
 	switch getType {
 	case "cmd":
 		return NewCommand(getValue), nil
@@ -37,7 +47,7 @@ func NewFetcher(getType string, getValue string) (Fetcher, error) {
 	case "nic":
 		return NewNic(getValue), nil
 	case "url":
-		return NewUrl(getValue), nil
+		return NewUrlWithStrategy(getValue, strategy)
 	default:
 		return nil, fmt.Errorf("addr NewFetcher: 不支持的获取方式: %s", getType)
 	}

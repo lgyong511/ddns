@@ -475,7 +475,7 @@ func (s *Server) providerForm(idx int) http.HandlerFunc {
 			s.renderConfigError(w, err)
 			return
 		}
-		form := providerForm{Name: "", Provider: "", ForceInterval: "", Records: []recordForm{{IPVersion: "4", GetType: "url"}}}
+		form := providerForm{Name: "", Provider: "", ForceInterval: "", Records: []recordForm{{IPVersion: "4", GetType: "url", FetchStrategy: "ordered"}}}
 		configVersion, err := versionConfig(cfg)
 		if err != nil {
 			s.renderError(w, r, err)
@@ -590,7 +590,7 @@ func (s *Server) recordForm(pIdx, rIdx int) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		form := recordForm{IPVersion: "4", TTL: "", Interval: "", GetType: "url"}
+		form := recordForm{IPVersion: "4", TTL: "", Interval: "", GetType: "url", FetchStrategy: "ordered"}
 		configVersion, err := versionConfig(cfg)
 		if err != nil {
 			s.renderError(w, r, err)
@@ -607,7 +607,7 @@ func (s *Server) recordForm(pIdx, rIdx int) http.HandlerFunc {
 			form = recordForm{
 				Name: rec.Name, SubDomains: strings.Join(rec.SubDomains, ", "), IPVersion: fmt.Sprint(rec.IPVersion),
 				TTL: fmt.Sprint(rec.TTL), Interval: fmt.Sprint(int64(rec.Interval)), GetType: rec.GetType,
-				GetValue: rec.GetValue, Rule: rec.Rule,
+				GetValue: rec.GetValue, FetchStrategy: rec.FetchStrategy, Rule: rec.Rule,
 			}
 			title = "编辑解析记录"
 			action = fmt.Sprintf("/providers/%d/records/%d", pIdx, rIdx)
@@ -852,7 +852,7 @@ func (s *Server) renderConfigError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) renderProviderError(w http.ResponseWriter, r *http.Request, idx int, err error) {
-	form := providerForm{Name: r.FormValue("name"), Provider: r.FormValue("provider"), KeyID: r.FormValue("keyId"), ForceInterval: r.FormValue("forceInterval"), Records: []recordForm{{IPVersion: "4", GetType: "url"}}}
+	form := providerForm{Name: r.FormValue("name"), Provider: r.FormValue("provider"), KeyID: r.FormValue("keyId"), ForceInterval: r.FormValue("forceInterval"), Records: []recordForm{{IPVersion: "4", GetType: "url", FetchStrategy: "ordered"}}}
 	action := "/providers"
 	if idx >= 0 {
 		action = fmt.Sprintf("/providers/%d", idx)
@@ -861,7 +861,7 @@ func (s *Server) renderProviderError(w http.ResponseWriter, r *http.Request, idx
 }
 
 func (s *Server) renderRecordError(w http.ResponseWriter, r *http.Request, pIdx, rIdx int, err error) {
-	form := recordForm{Name: r.FormValue("name"), SubDomains: r.FormValue("subDomains"), IPVersion: r.FormValue("ipVersion"), TTL: r.FormValue("ttl"), Interval: r.FormValue("interval"), GetType: r.FormValue("getType"), GetValue: r.FormValue("getValue"), Rule: r.FormValue("rule")}
+	form := recordForm{Name: r.FormValue("name"), SubDomains: r.FormValue("subDomains"), IPVersion: r.FormValue("ipVersion"), TTL: r.FormValue("ttl"), Interval: r.FormValue("interval"), GetType: r.FormValue("getType"), GetValue: r.FormValue("getValue"), FetchStrategy: r.FormValue("fetchStrategy"), Rule: r.FormValue("rule")}
 	action := fmt.Sprintf("/providers/%d/records", pIdx)
 	if rIdx >= 0 {
 		action = fmt.Sprintf("/providers/%d/records/%d", pIdx, rIdx)
@@ -881,10 +881,10 @@ type providerForm struct {
 func recordForms(records []config.Record) []recordForm {
 	forms := make([]recordForm, 0, len(records))
 	for _, rec := range records {
-		forms = append(forms, recordForm{Name: rec.Name, SubDomains: strings.Join(rec.SubDomains, ", "), IPVersion: fmt.Sprint(rec.IPVersion), TTL: fmt.Sprint(rec.TTL), Interval: fmt.Sprint(int64(rec.Interval)), GetType: rec.GetType, GetValue: rec.GetValue, Rule: rec.Rule})
+		forms = append(forms, recordForm{Name: rec.Name, SubDomains: strings.Join(rec.SubDomains, ", "), IPVersion: fmt.Sprint(rec.IPVersion), TTL: fmt.Sprint(rec.TTL), Interval: fmt.Sprint(int64(rec.Interval)), GetType: rec.GetType, GetValue: rec.GetValue, FetchStrategy: rec.FetchStrategy, Rule: rec.Rule})
 	}
 	if len(forms) == 0 {
-		return []recordForm{{IPVersion: "4", GetType: "url"}}
+		return []recordForm{{IPVersion: "4", GetType: "url", FetchStrategy: "ordered"}}
 	}
 	return forms
 }
@@ -910,7 +910,8 @@ func parseProviderRecords(r *http.Request) ([]config.Record, error) {
 	records := make([]config.Record, 0, len(names))
 	for i := range names {
 		getType := r.FormValue(fmt.Sprintf("recordGetType%d", i))
-		form := recordForm{Name: names[i], SubDomains: r.Form["recordSubDomains"][i], IPVersion: r.Form["recordIPVersion"][i], TTL: r.Form["recordTTL"][i], Interval: r.Form["recordInterval"][i], GetType: getType, GetValue: r.Form["recordGetValue"][i], Rule: r.Form["recordRule"][i]}
+		fetchStrategy := r.FormValue(fmt.Sprintf("recordFetchStrategy%d", i))
+		form := recordForm{Name: names[i], SubDomains: r.Form["recordSubDomains"][i], IPVersion: r.Form["recordIPVersion"][i], TTL: r.Form["recordTTL"][i], Interval: r.Form["recordInterval"][i], GetType: getType, GetValue: r.Form["recordGetValue"][i], FetchStrategy: fetchStrategy, Rule: r.Form["recordRule"][i]}
 		if form.GetType == "url" && strings.TrimSpace(form.GetValue) == "" {
 			if form.IPVersion == "6" {
 				form.GetValue = ipv6Preset
@@ -947,18 +948,19 @@ func parseProvider(r *http.Request) (config.Provider, error) {
 }
 
 type recordForm struct {
-	Name       string
-	SubDomains string
-	IPVersion  string
-	TTL        string
-	Interval   string
-	GetType    string
-	GetValue   string
-	Rule       string
+	Name          string
+	SubDomains    string
+	IPVersion     string
+	TTL           string
+	Interval      string
+	GetType       string
+	GetValue      string
+	FetchStrategy string
+	Rule          string
 }
 
 func parseRecord(r *http.Request) (config.Record, error) {
-	form := recordForm{Name: r.FormValue("name"), SubDomains: r.FormValue("subDomains"), IPVersion: r.FormValue("ipVersion"), TTL: r.FormValue("ttl"), Interval: r.FormValue("interval"), GetType: r.FormValue("getType"), GetValue: r.FormValue("getValue"), Rule: r.FormValue("rule")}
+	form := recordForm{Name: r.FormValue("name"), SubDomains: r.FormValue("subDomains"), IPVersion: r.FormValue("ipVersion"), TTL: r.FormValue("ttl"), Interval: r.FormValue("interval"), GetType: r.FormValue("getType"), GetValue: r.FormValue("getValue"), FetchStrategy: r.FormValue("fetchStrategy"), Rule: r.FormValue("rule")}
 	return parseRecordForm(form)
 }
 
@@ -978,7 +980,8 @@ func parseRecordForm(form recordForm) (config.Record, error) {
 	rec := config.Record{
 		Name: strings.TrimSpace(form.Name), SubDomains: splitDomains(form.SubDomains),
 		IPVersion: ipVersion, TTL: ttl, GetType: getType, GetValue: getValue,
-		Interval: interval, Rule: strings.TrimSpace(form.Rule),
+		FetchStrategy: strings.TrimSpace(form.FetchStrategy), Interval: interval,
+		Rule: strings.TrimSpace(form.Rule),
 	}
 	if rec.Name == "" {
 		return rec, fmt.Errorf("记录名称不能为空")

@@ -29,3 +29,19 @@ func TestSpliceSelectDoesNotMutateIndex(t *testing.T) {
 		t.Fatalf("selector index mutated to %d", selector.Index)
 	}
 }
+
+func TestSortAddressesIsDeterministic(t *testing.T) {
+	addresses := []netip.Addr{
+		netip.MustParseAddr("2001:db8::2"),
+		netip.MustParseAddr("8.8.8.8"),
+		netip.MustParseAddr("1.1.1.1"),
+		netip.MustParseAddr("2001:db8::1"),
+	}
+	sortAddresses(addresses)
+	want := []string{"1.1.1.1", "8.8.8.8", "2001:db8::1", "2001:db8::2"}
+	for index, address := range addresses {
+		if address.String() != want[index] {
+			t.Fatalf("addresses[%d] = %s, want %s", index, address, want[index])
+		}
+	}
+}

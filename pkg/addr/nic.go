@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 )
 
 // Nic 获取网卡信息
@@ -48,6 +49,7 @@ func GetAllNic() (map[string][]netip.Addr, error) {
 		}
 
 		if len(ips) > 0 {
+			sortAddresses(ips)
 			result[iface.Name] = ips
 		}
 	}
@@ -57,6 +59,12 @@ func GetAllNic() (map[string][]netip.Addr, error) {
 	}
 
 	return result, nil
+}
+
+func sortAddresses(addresses []netip.Addr) {
+	slices.SortFunc(addresses, func(left, right netip.Addr) int {
+		return left.Compare(right)
+	})
 }
 
 // NIC 根据网卡名字获取IP
