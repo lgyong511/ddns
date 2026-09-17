@@ -10,10 +10,10 @@ providers:
           - your.ex.xx
         ipVersion: 6
         ttl: 600
-        getType: cmd
-        getValue: ifconfig | awk '/240:?/' | awk '{print $2}'
+        getType: nic
+        getValue: br-lan
         interval: 20
-        rule: ""
+        rule: "contain@2408"
       - name: YOUR_RECORD_NAME2
         subDomains:
           - your.ex.xx

@@ -1,12 +1,12 @@
 # DDNS
 
-DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具。它会定时获取当前公网 IP，并自动更新 DNS 服务商中的解析记录，支持多少方式获取IP地址。适合家庭网络、NAS、软路由等场景。
+DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具。它会定时获取当前公网 IP，并自动更新 DNS 服务商中的解析记录，支持多种方式获取 IP 地址。适合家庭网络、NAS、软路由等场景。
 
 ## 功能特点
 
 - 支持定时检测当前公网 IP
 - 支持将 IP 自动同步到 DNS 解析记录
-- 支持多种获取 IP 的方式：命令行、网卡、URL、DUID
+- 支持多种获取 IP 的方式：网卡、URL、DUID
 - 支持 IPv4 / IPv6
 - 支持热加载配置文件变化
 - 提供 Docker 部署方式
@@ -18,10 +18,11 @@ DDNS 是一个基于 Go 语言实现的轻量级动态域名解析同步工具�
 
 - DNS 服务商：aliyun（阿里云）、baidu（百度云）、dnsla（DNSLA）、tencent（腾讯云）、huawei（华为云）、volcengine（火山引擎）
 - IP 获取方式：
-  - `cmd`：执行系统命令
   - `nic`：读取本机网卡 IP
   - `url`：通过 HTTP 请求获取公网 IP
   - `duid`：适用于 OpenWrt 设备
+
+`cmd` 获取方式已弃用，仅为旧配置保留运行和导入兼容性，将在下一个大版本删除。
 
 
 ## 快速开始
@@ -171,13 +172,13 @@ providers:
     keySecret: YOUR_ACCESS_KEY_SECRET
     forceInterval: 5
     records:
-      - name: Nas_cmd_6
+      - name: Nas_nic_6
         subDomains:
           - myz.lgyong.cc
         ipVersion: 6
         ttl: 600
-        getType: cmd
-        getValue: ip addr show br-lan
+        getType: nic
+        getValue: br-lan
         interval: 30
         rule: "splice@1@9209:d0ff:fe09:781d"
       - name: Home_nic_6
@@ -215,13 +216,13 @@ providers:
     keySecret: YOUR_ACCESS_KEY_SECRET
     forceInterval: 5
     records:
-      - name: Nas_cmd_6
+      - name: Nas_nic_6
         subDomains:
           - myz.lgyong.cc
         ipVersion: 6
         ttl: 600
-        getType: cmd
-        getValue: ip addr show br-lan
+        getType: nic
+        getValue: br-lan
         interval: 30
         rule: "splice@1@9209:d0ff:fe09:781d"
       - name: Home_nic_6
@@ -397,7 +398,7 @@ Web 控制台默认监听所有网卡。部署在公网或局域网环境时，�
 长度按 UTF-8 字节数计算，Web 页面会同步限制输入长度，服务端也会再次校验：
 
 - 服务商名称、记录名称：最多 64 字节；Access Key ID、Secret：最多 256 字节；
-- URL：最多 2048 字节；系统命令：最多 4096 字节；网卡名称：最多 256 字节；DUID：最多 128 字节；筛选规则：最多 512 字节；
+- URL：最多 2048 字节；网卡名称：最多 256 字节；DUID：最多 128 字节；筛选规则：最多 512 字节；旧版系统命令最多 4096 字节；
 - 域名：单个标签最多 63 字节，完整域名最多 253 字节；中文域名按转换后的 ASCII（Punycode）长度计算；
 - Webhook URL：最多 2048 字节；请求体：最多 64 KiB；单个请求头：最多 1024 字节，所有请求头合计最多 8 KiB；
 - Web 登录账号最多 64 字节，密码最多 72 字节；单个 POST 请求体最多 1 MiB。
@@ -419,7 +420,7 @@ Web 控制台默认监听所有网卡。部署在公网或局域网环境时，�
 - `subDomains`：必选，要更新的子域名列表
 - `ipVersion`：必选，`4` 表示 IPv4，`6` 表示 IPv6
 - `ttl`：可选，DNS 记录生存时间，单位秒，默认600秒，可配置范围1-86400秒，警告：请确定服务商支持小的生效时间
-- `getType`：必选，IP 获取方式，cmd、url、nic、duid
+- `getType`：必选，IP 获取方式为 `url`、`nic` 或 `duid`；旧配置中的 `cmd` 暂时兼容
 - `getValue`：必选，对应获取方式的参数
 - `interval`：可选，检测周期，单位秒，默认30秒，可配置范围10-60秒
 - `rule`：可选，IP 过滤规则，可配置范围：[跳转到rule说明](#rule说明)
@@ -469,20 +470,14 @@ Webhook 发送失败只记录日志，不会阻塞 DNS 轮询。
 
 ## 示例：不同获取方式
 
-### 命令行方式
+### 从命令行方式迁移
 
-```yaml
-records:
-  - name: ipv6-cmd
-    subDomains:
-      - home.example.com
-    ipVersion: 6
-    ttl: 600
-    getType: cmd
-    getValue: ip addr show br-lan
-    interval: 30
-    rule: ""
-```
+`cmd` 会执行配置中的 shell 命令，存在命令注入、输出失控和跨平台差异等风险，因此 Web 控制台不再允许新建或修改命令。旧 YAML 仍可运行和导入，但启动时会记录弃用告警，并将在下一个大版本删除支持。
+
+- `ip addr show br-lan`、`ifconfig` 等读取本机地址的命令：改用 `getType: nic` 和对应网卡名。
+- `curl`、`wget` 等查询公网地址的命令：改用 `getType: url` 和 HTTP 地址。
+- 地址筛选改用 `contain@文本`、`prefix@CIDR`、`index@n` 或 IPv6 的 `splice@n@后缀`。
+- SSH、厂商 CLI、UPnP 或任意脚本无法由内置方式等价覆盖；升级到下一个大版本前应迁移到返回 IP 的 HTTP 服务，或在程序外生成可供 URL 获取的结果。
 
 ### URL 方式
 

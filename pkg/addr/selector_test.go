@@ -1,7 +1,11 @@
 package addr
 
 import (
+	"bytes"
+	"log/slog"
 	"net/netip"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -79,5 +83,23 @@ func TestNewFetcherCreatesSupportedTypes(t *testing.T) {
 				t.Fatalf("NewFetcher(%q) = %T, %v", tt.getType, fetcher, err)
 			}
 		})
+	}
+}
+
+func TestNewFetcherWarnsOnceForDeprecatedCommand(t *testing.T) {
+	previousLogger := slog.Default()
+	defer slog.SetDefault(previousLogger)
+	defer func() { commandDeprecationOnce = sync.Once{} }()
+
+	var output bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	commandDeprecationOnce = sync.Once{}
+	for range 2 {
+		if _, err := NewFetcher("cmd", "echo 127.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if count := strings.Count(output.String(), "cmd 地址获取方式已弃用"); count != 1 {
+		t.Fatalf("deprecation warning count = %d, want 1; output: %s", count, output.String())
 	}
 }

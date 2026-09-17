@@ -33,7 +33,7 @@
       <fieldset class="radio-grid" aria-label="获取方式">
         <legend>获取方式</legend>
         <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="url" {{if or (eq .Form.GetType "") (eq .Form.GetType "url")}}checked{{end}}> URL请求</span></label>
-        <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="cmd" {{if eq .Form.GetType "cmd"}}checked{{end}}> 系统命令</span></label>
+        {{if eq .Form.GetType "cmd"}}<label class="method-option deprecated"><span class="method-option-title"><input type="radio" name="getType" value="cmd" checked> 系统命令（已弃用）</span></label>{{end}}
         <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="nic" {{if eq .Form.GetType "nic"}}checked{{end}}> 系统网卡</span></label>
         <label class="method-option"><span class="method-option-title"><input type="radio" name="getType" value="duid" {{if eq .Form.GetType "duid"}}checked{{end}}> DUID标识</span></label>
       </fieldset>
@@ -61,9 +61,10 @@
           <span class="field-help">单个 URL 使用任意策略效果相同；严格多数按成功端点计票。</span>
         </label>
       </div>
-      <div class="method-box" data-method="cmd">
-        <label>系统命令<input name="getValue" maxlength="4096" value="{{if eq .Form.GetType "cmd"}}{{.Form.GetValue}}{{end}}" placeholder="ip addr show br-lan"></label>
-      </div>
+      {{if eq .Form.GetType "cmd"}}<div class="method-box" data-method="cmd">
+        <label>系统命令<input name="getValue" maxlength="4096" value="{{.Form.GetValue}}" readonly></label>
+        <span class="field-help">此方式已弃用且命令内容只读，请改用系统网卡或 URL；将在下一个大版本删除。</span>
+      </div>{{end}}
       <div class="method-box" data-method="duid">
         <label>DUID<input name="getValue" maxlength="128" value="{{if eq .Form.GetType "duid"}}{{.Form.GetValue}}{{end}}" placeholder="000300019009d009781d"></label>
       </div>
@@ -84,7 +85,7 @@
     const duidRadio = document.querySelector('input[name="getType"][value="duid"]');
     const methodHelp = document.querySelector('[data-method-help]');
     const helpText = {
-      cmd: '通过执行系统命令获取IP地址。',
+      cmd: '旧配置兼容模式：命令内容只读，请迁移到系统网卡或 URL。',
       nic: '选择系统网卡获取IP地址。',
       url: '访问URL获取IP地址，多个URL使用英文逗号（,）分隔，并可选择结果汇总策略。',
       duid: '读取 DHCPv6 唯一标识获取IP地址，只支持OpenWrt系统。'

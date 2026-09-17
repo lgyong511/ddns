@@ -3,8 +3,10 @@ package addr
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"regexp"
+	"sync"
 )
 
 // Addr 获取IP地址，通过系统命令、DUID、系统网卡、URL等方式获取IP地址
@@ -18,7 +20,8 @@ var (
 	// ipv4Reg IPV4地址初筛正则表达式
 	ipv4Reg = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
 	// ipv6Reg IPV6地址初筛正则表达式
-	ipv6Reg = regexp.MustCompile(`(?:[0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:`)
+	ipv6Reg                = regexp.MustCompile(`(?:[0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:`)
+	commandDeprecationOnce sync.Once
 )
 
 // Fetcher 获取IP地址的接口
@@ -41,6 +44,9 @@ func NewFetcher(getType string, getValue string, fetchStrategy ...string) (Fetch
 	}
 	switch getType {
 	case "cmd":
+		commandDeprecationOnce.Do(func() {
+			slog.Warn("cmd 地址获取方式已弃用，将在下一个大版本删除；请迁移到 nic 或 url")
+		})
 		return NewCommand(getValue), nil
 	case "duid":
 		return NewDuid(getValue), nil
