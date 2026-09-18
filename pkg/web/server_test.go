@@ -137,42 +137,7 @@ func TestPageIncludesVersion(t *testing.T) {
 	}
 }
 
-func TestValidateLegacyCommandRecord(t *testing.T) {
-	legacy := config.Record{Name: "nas", GetType: "cmd", GetValue: "ip addr show br-lan"}
-	tests := []struct {
-		name     string
-		existing *config.Record
-		next     config.Record
-		wantErr  bool
-	}{
-		{name: "new command rejected", next: legacy, wantErr: true},
-		{name: "changed source rejected", existing: &config.Record{GetType: "url"}, next: legacy, wantErr: true},
-		{name: "changed command rejected", existing: &legacy, next: config.Record{Name: "nas", GetType: "cmd", GetValue: "hostname -I"}, wantErr: true},
-		{name: "unchanged legacy allowed", existing: &legacy, next: legacy},
-		{name: "migration allowed", existing: &legacy, next: config.Record{Name: "nas", GetType: "nic", GetValue: "br-lan"}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateLegacyCommandRecord(test.existing, test.next)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("validateLegacyCommandRecord() error = %v, want error %v", err, test.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateLegacyCommandRecordsMatchesExistingName(t *testing.T) {
-	existing := []config.Record{{Name: "nas", GetType: "cmd", GetValue: "ip addr show br-lan"}}
-	if err := validateLegacyCommandRecords(existing, existing); err != nil {
-		t.Fatal(err)
-	}
-	renamed := []config.Record{{Name: "renamed", GetType: "cmd", GetValue: "ip addr show br-lan"}}
-	if err := validateLegacyCommandRecords(existing, renamed); err == nil {
-		t.Fatal("validateLegacyCommandRecords() accepted a renamed command record")
-	}
-}
-
-func TestRecordTemplatesHideNewCommandSource(t *testing.T) {
+func TestRecordTemplatesListSupportedSources(t *testing.T) {
 	templates, err := parseTemplates()
 	if err != nil {
 		t.Fatal(err)
@@ -191,36 +156,14 @@ func TestRecordTemplatesHideNewCommandSource(t *testing.T) {
 			if err := templates.ExecuteTemplate(&output, test.template, test.data); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(output.String(), `value="cmd"`) {
+			html := output.String()
+			if strings.Contains(html, `value="cmd"`) {
 				t.Fatalf("%s exposes cmd for a new record", test.template)
 			}
-		})
-	}
-}
-
-func TestRecordTemplatesKeepLegacyCommandReadOnly(t *testing.T) {
-	templates, err := parseTemplates()
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := recordForm{Name: "nas", GetType: "cmd", GetValue: "ip addr show br-lan"}
-	tests := []struct {
-		name     string
-		template string
-		data     map[string]any
-	}{
-		{name: "record", template: "record_form.html", data: map[string]any{"Form": legacy}},
-		{name: "provider", template: "provider_form.html", data: map[string]any{"Form": providerForm{Records: []recordForm{legacy}}}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var output bytes.Buffer
-			if err := templates.ExecuteTemplate(&output, test.template, test.data); err != nil {
-				t.Fatal(err)
-			}
-			html := output.String()
-			if !strings.Contains(html, `value="cmd"`) || !strings.Contains(html, "readonly") || !strings.Contains(html, "已弃用") {
-				t.Fatalf("%s did not render read-only legacy cmd controls", test.template)
+			for _, getType := range []string{"url", "nic", "duid"} {
+				if !strings.Contains(html, `value="`+getType+`"`) {
+					t.Errorf("%s does not expose supported source %q", test.template, getType)
+				}
 			}
 		})
 	}

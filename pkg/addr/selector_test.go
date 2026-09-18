@@ -1,11 +1,7 @@
 package addr
 
 import (
-	"bytes"
-	"log/slog"
 	"net/netip"
-	"strings"
-	"sync"
 	"testing"
 )
 
@@ -61,8 +57,12 @@ func TestNewSelectorRejectsInvalidRules(t *testing.T) {
 }
 
 func TestNewFetcherRejectsUnsupportedType(t *testing.T) {
-	if _, err := NewFetcher("unknown", "value"); err == nil {
-		t.Fatal("NewFetcher() accepted unsupported type")
+	for _, getType := range []string{"cmd", "unknown"} {
+		t.Run(getType, func(t *testing.T) {
+			if _, err := NewFetcher(getType, "value"); err == nil {
+				t.Fatalf("NewFetcher(%q) accepted unsupported type", getType)
+			}
+		})
 	}
 }
 
@@ -71,7 +71,6 @@ func TestNewFetcherCreatesSupportedTypes(t *testing.T) {
 		getType  string
 		getValue string
 	}{
-		{getType: "cmd", getValue: "echo 127.0.0.1"},
 		{getType: "duid", getValue: "duid"},
 		{getType: "nic", getValue: "lo"},
 		{getType: "url", getValue: "https://example.com"},
@@ -83,23 +82,5 @@ func TestNewFetcherCreatesSupportedTypes(t *testing.T) {
 				t.Fatalf("NewFetcher(%q) = %T, %v", tt.getType, fetcher, err)
 			}
 		})
-	}
-}
-
-func TestNewFetcherWarnsOnceForDeprecatedCommand(t *testing.T) {
-	previousLogger := slog.Default()
-	defer slog.SetDefault(previousLogger)
-	defer func() { commandDeprecationOnce = sync.Once{} }()
-
-	var output bytes.Buffer
-	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
-	commandDeprecationOnce = sync.Once{}
-	for range 2 {
-		if _, err := NewFetcher("cmd", "echo 127.0.0.1"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if count := strings.Count(output.String(), "cmd 地址获取方式已弃用"); count != 1 {
-		t.Fatalf("deprecation warning count = %d, want 1; output: %s", count, output.String())
 	}
 }

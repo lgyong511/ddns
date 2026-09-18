@@ -19,7 +19,6 @@ const (
 	MaxRecordNameBytes     = 64
 	MaxAccessKeyBytes      = 256
 	MaxURLBytes            = 2048
-	MaxCommandBytes        = 4096
 	MaxNICBytes            = 256
 	MaxDUIDBytes           = 128
 	MaxRuleBytes           = 512
@@ -113,9 +112,9 @@ type Record struct {
 	IPVersion provider.Version `yaml:"ipVersion" mapstructure:"ipVersion"`
 	// 生效时间，单位秒
 	TTL int64 `yaml:"ttl" mapstructure:"ttl"`
-	//获取IP地址的类型，如：CMD、URL
+	// 获取IP地址的类型：URL、NIC、DUID
 	GetType string `yaml:"getType" mapstructure:"getType"`
-	//对应的值，如：ipconfig、https://ip.cn
+	// 对应的 URL、网卡名称或 DUID
 	GetValue string `yaml:"getValue" mapstructure:"getValue"`
 	// URL 多端点获取策略
 	FetchStrategy string `yaml:"fetchStrategy" mapstructure:"fetchStrategy"`
@@ -213,7 +212,7 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 不能为空", p.Name, j))
 			}
 			if !validGetTypes[r.GetType] {
-				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 无效，请填写 cmd、url、nic 或 duid", p.Name, j))
+				errs = append(errs, fmt.Errorf("providers[%s].records[%d].getType 无效，请填写 url、nic 或 duid", p.Name, j))
 			}
 			if err := validateByteLength("providers["+p.Name+"].records["+strconv.Itoa(j)+"].getType", r.GetType, MaxGetTypeBytes); err != nil {
 				errs = append(errs, err)
@@ -331,7 +330,6 @@ var validProviderTypes = map[string]bool{
 }
 
 var validGetTypes = map[string]bool{
-	"cmd":  true,
 	"url":  true,
 	"nic":  true,
 	"duid": true,
@@ -348,14 +346,12 @@ func maxGetValueBytes(getType string) int {
 	switch getType {
 	case "url":
 		return MaxURLBytes
-	case "cmd":
-		return MaxCommandBytes
 	case "nic":
 		return MaxNICBytes
 	case "duid":
 		return MaxDUIDBytes
 	default:
-		return MaxCommandBytes
+		return MaxURLBytes
 	}
 }
 

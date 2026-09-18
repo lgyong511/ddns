@@ -531,19 +531,11 @@ func (s *Server) saveProvider(idx int) http.HandlerFunc {
 				return
 			}
 			old := cfg.Providers[idx]
-			if err := validateLegacyCommandRecords(old.Records, p.Records); err != nil {
-				s.renderProviderError(w, r, idx, err)
-				return
-			}
 			if p.KeySecret == "" {
 				p.KeySecret = old.KeySecret
 			}
 			cfg.Providers[idx] = p
 		} else {
-			if err := validateLegacyCommandRecords(nil, p.Records); err != nil {
-				s.renderProviderError(w, r, idx, err)
-				return
-			}
 			if p.KeySecret == "" {
 				s.renderProviderError(w, r, idx, fmt.Errorf("Access Key Secret 不能为空"))
 				return
@@ -655,17 +647,8 @@ func (s *Server) saveRecord(pIdx, rIdx int) http.HandlerFunc {
 				http.NotFound(w, r)
 				return
 			}
-			oldRecord := cfg.Providers[pIdx].Records[rIdx]
-			if err := validateLegacyCommandRecord(&oldRecord, rec); err != nil {
-				s.renderRecordError(w, r, pIdx, rIdx, err)
-				return
-			}
 			cfg.Providers[pIdx].Records[rIdx] = rec
 		} else {
-			if err := validateLegacyCommandRecord(nil, rec); err != nil {
-				s.renderRecordError(w, r, pIdx, rIdx, err)
-				return
-			}
 			cfg.Providers[pIdx].Records = append(cfg.Providers[pIdx].Records, rec)
 		}
 		if err := s.persist(&cfg); err != nil {
@@ -1016,39 +999,6 @@ func parseRecordForm(form recordForm) (config.Record, error) {
 		return rec, fmt.Errorf("%s 获取方式必须填写对应值", rec.GetType)
 	}
 	return rec, nil
-}
-
-func validateLegacyCommandRecords(existing, next []config.Record) error {
-	existingByName := make(map[string]config.Record, len(existing))
-	for _, record := range existing {
-		existingByName[record.Name] = record
-	}
-	for _, record := range next {
-		oldRecord, exists := existingByName[record.Name]
-		if !exists {
-			if err := validateLegacyCommandRecord(nil, record); err != nil {
-				return fmt.Errorf("记录 %s: %w", record.Name, err)
-			}
-			continue
-		}
-		if err := validateLegacyCommandRecord(&oldRecord, record); err != nil {
-			return fmt.Errorf("记录 %s: %w", record.Name, err)
-		}
-	}
-	return nil
-}
-
-func validateLegacyCommandRecord(existing *config.Record, next config.Record) error {
-	if next.GetType != "cmd" {
-		return nil
-	}
-	if existing == nil || existing.GetType != "cmd" {
-		return fmt.Errorf("Web 控制台不再支持新建 cmd 获取方式，请使用 nic 或 url")
-	}
-	if next.GetValue != existing.GetValue {
-		return fmt.Errorf("已弃用的 cmd 命令内容只读，请迁移到 nic 或 url")
-	}
-	return nil
 }
 
 type webhookForm struct {

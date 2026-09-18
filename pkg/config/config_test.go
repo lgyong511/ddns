@@ -181,12 +181,12 @@ func TestConfigValidateEnumerationsAndRanges(t *testing.T) {
 	}
 }
 
-func TestConfigValidateKeepsLegacyCommandCompatibility(t *testing.T) {
+func TestConfigValidateRejectsCommandType(t *testing.T) {
 	cfg := validConfig()
 	cfg.Providers[0].Records[0].GetType = "cmd"
 	cfg.Providers[0].Records[0].GetValue = "ip addr show br-lan"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() rejected legacy cmd configuration: %v", err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), ".getType 无效") {
+		t.Fatalf("Validate() error = %v, want command type rejection", err)
 	}
 }
 
